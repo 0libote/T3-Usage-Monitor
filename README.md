@@ -4,6 +4,12 @@ A custom Home Assistant integration that reads token usage, estimated cost, and
 subscription limits from an **existing T3 Code server**. Install it in Home
 Assistant on HAOS, Container, or another supported installation.
 
+[![Open T3 Code in HACS to install](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=0libote&repository=T3-x-HA&category=integration)
+
+Requires [HACS](https://hacs.xyz/). Click the button, open the repository in your
+Home Assistant instance, select **Download**, then restart Home Assistant and
+add **T3 Code** under **Settings → Devices & services**.
+
 Version 0.1.0 is an initial implementation. It connects directly over T3's HTTP
 and WebSocket APIs; no additional bridge, MQTT broker, T3 plugin, or server patch
 is required. It does not install or run T3 Code on HAOS.
