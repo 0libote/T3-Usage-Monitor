@@ -1,9 +1,9 @@
 {
-  "title": "T3 Code",
+  "title": "T3 Usage Monitor",
   "config": {
     "step": {
       "user": {
-        "title": "Connect to T3 Code",
+        "title": "Connect your T3 server",
         "description": "Connect to an existing T3 Code server. Paste its /pair#token=... link, or enter the server URL and a pairing token. For a token issued by t3 auth session issue, select Bearer token. The address must be reachable from Home Assistant.",
         "data": {
           "url": "T3 server URL or pairing link",
@@ -12,7 +12,7 @@
         }
       },
       "reauth_confirm": {
-        "title": "Connect to T3 Code",
+        "title": "Connect your T3 server",
         "description": "The T3 session expired or was revoked. Enter a new pairing link/token or bearer token for the same server.",
         "data": {
           "url": "T3 server URL or pairing link",
@@ -21,7 +21,7 @@
         }
       },
       "reconfigure": {
-        "title": "Connect to T3 Code",
+        "title": "Connect your T3 server",
         "description": "Update the address or credential for this T3 server. Supply a new pairing link/token or bearer token; the server identity must match.",
         "data": {
           "url": "T3 server URL or pairing link",
@@ -46,10 +46,10 @@
   "options": {
     "step": {
       "init": {
-        "title": "T3 Code display and polling",
+        "title": "T3 Usage Monitor",
         "data": {
           "scan_interval": "Polling interval (seconds, 300\u20133600)",
-          "show_dashboard": "Show T3 Code dashboard in the sidebar"
+          "show_dashboard": "Show T3 Usage Monitor in the sidebar"
         }
       }
     }

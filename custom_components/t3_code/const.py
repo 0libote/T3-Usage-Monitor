@@ -1,6 +1,7 @@
-"""Constants for T3 Code."""
+"""Constants for T3 Usage Monitor."""
 
 DOMAIN = "t3_code"
+NAME = "T3 Usage Monitor"
 CONF_CREDENTIAL = "credential"
 CONF_CREDENTIAL_TYPE = "credential_type"
 CONF_SCAN_INTERVAL = "scan_interval"

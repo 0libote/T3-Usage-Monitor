@@ -1,4 +1,4 @@
-# T3 Code reference
+# T3 Usage Monitor reference
 
 [Back to the install and use guide](../README.md)
 
@@ -8,10 +8,10 @@ Copy `custom_components/t3_code` to `/config/custom_components/t3_code` in your
 Home Assistant configuration directory. Or generate `dist/t3_code.zip` with
 `python scripts/package.py` and extract it into `/config/custom_components/`.
 Check that `/config/custom_components/t3_code/manifest.json` exists, restart Home
-Assistant, then add T3 Code in Settings > Devices & services.
+Assistant, then add T3 Usage Monitor in Settings > Devices & services.
 
 To add the repository manually in HACS, open HACS > Custom repositories, enter
-`https://github.com/0libote/T3-x-HA`, select Integration, and download T3 Code.
+`https://github.com/0libote/T3-x-HA`, select Integration, and download T3 Usage Monitor.
 Restart Home Assistant, then add the integration. This is a HACS custom
 repository; it is not listed in the default HACS catalog or the HAOS app/add-on
 store.
@@ -68,7 +68,7 @@ or a trusted local network. TLS certificate verification is enabled.
 
 ## Sensor details and upgrades
 
-Version 0.2 adds a T3 Code sidebar dashboard automatically. It uses built-in Home
+Version 0.2 adds a T3 Usage Monitor sidebar dashboard automatically. It uses built-in Home
 Assistant cards, with compact token counts, costs rounded to two decimals, and
 quota gauges grouped by account. Each connected server gets its own dashboard.
 You can hide it in the integration's Options. Your existing dashboards are left
@@ -83,7 +83,7 @@ K/M/B abbreviations apply to the dashboard display.
 
 Separate input, output, cache, reasoning, per-provider cost, quota-used,
 reset-timestamp, and reset-credit sensors are disabled by default. To use one,
-open Settings > Devices & services > Entities, filter by T3 Code, and enable the
+open Settings > Devices & services > Entities, filter by T3 Usage Monitor, and enable the
 sensor you want. These details are classified as diagnostic sensors.
 
 When upgrading from 0.1, existing detailed sensors stay active so automations
@@ -94,7 +94,7 @@ ones you no longer need in the entity settings. The upgrade adjusts visibility
 once, so later visibility changes remain yours.
 
 To update an existing installation, download the update in HACS and restart Home
-Assistant, then open T3 Code in the sidebar.
+Assistant, then open T3 Usage Monitor in the sidebar.
 
 ## Dashboard and notification examples
 
@@ -103,7 +103,7 @@ the entity IDs with those in your Home Assistant instance.
 
 ```yaml
 type: entities
-title: T3 Code
+title: T3 Usage Monitor
 entities:
   - entity: sensor.development_today_tokens
   - entity: sensor.development_today_estimated_cost
@@ -115,7 +115,7 @@ entities:
 A low-quota notification can use a numeric-state trigger:
 
 ```yaml
-alias: T3 Code low quota
+alias: T3 Usage Monitor low quota
 triggers:
   - trigger: numeric_state
     entity_id: sensor.development_codex_5_hour_remaining
@@ -123,7 +123,7 @@ triggers:
 actions:
   - action: persistent_notification.create
     data:
-      title: T3 Code quota
+      title: T3 Usage Monitor quota
       message: Codex has less than 20% remaining in its session window.
 ```
 

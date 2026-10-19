@@ -1,4 +1,4 @@
-"""T3 Code usage sensors for Home Assistant."""
+"""T3 Usage Monitor integration for Home Assistant."""
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN, CONF_URL, Platform

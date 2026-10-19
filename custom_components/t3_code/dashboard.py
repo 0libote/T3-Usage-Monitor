@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.json import cached_json_fragment
 
-from .const import CONF_SHOW_DASHBOARD, DOMAIN
+from .const import CONF_SHOW_DASHBOARD, DOMAIN, NAME
 
 LOGGER = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
             }
         )
     return {
-        "title": "T3 Code",
+        "title": NAME,
         "views": [
             {
                 "title": "Overview",
@@ -177,7 +177,7 @@ class T3Dashboard(LovelaceConfig):
             path,
             {
                 "id": path,
-                "title": f"T3 Code · {entry.title}",
+                "title": f"{NAME} · {entry.title}",
                 "mode": "yaml",
                 "show_in_sidebar": True,
                 "require_admin": False,
@@ -216,7 +216,7 @@ def async_register_dashboard(hass: HomeAssistant, entry) -> None:
     frontend.async_register_built_in_panel(
         hass,
         "lovelace",
-        sidebar_title=f"T3 Code · {entry.title}",
+        sidebar_title=f"{NAME} · {entry.title}",
         sidebar_icon="mdi:chart-box-outline",
         frontend_url_path=path,
         config={"mode": "yaml"},

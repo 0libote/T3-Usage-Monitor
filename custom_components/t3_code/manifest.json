@@ -1,6 +1,6 @@
 {
   "domain": "t3_code",
-  "name": "T3 Code",
+  "name": "T3 Usage Monitor",
   "codeowners": ["@0libote"],
   "config_flow": true,
   "dependencies": ["lovelace"],

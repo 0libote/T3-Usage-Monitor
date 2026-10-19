@@ -2874,7 +2874,7 @@ wheels = [
 ]
 
 [[package]]
-name = "t3-code-home-assistant"
+name = "t3-usage-monitor"
 version = "0.2.0"
 source = { virtual = "." }
 

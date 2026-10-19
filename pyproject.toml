@@ -1,7 +1,7 @@
 [project]
-name = "t3-code-home-assistant"
+name = "t3-usage-monitor"
 version = "0.2.0"
-description = "T3 Code usage and subscription sensors for Home Assistant"
+description = "Monitor an existing T3 Code server's usage and subscription limits in Home Assistant"
 requires-python = ">=3.14.2"
 
 [dependency-groups]

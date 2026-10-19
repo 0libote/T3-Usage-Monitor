@@ -7,7 +7,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import template
 
-from custom_components.t3_code.const import CONF_SHOW_DASHBOARD, DOMAIN
+from custom_components.t3_code.const import CONF_SHOW_DASHBOARD, DOMAIN, NAME
 from custom_components.t3_code.dashboard import build_dashboard, summary_card
 
 from .test_integration import create_entry
@@ -32,6 +32,8 @@ async def test_dashboard_lifecycle_and_templates(hass, t3_server):
     assert frontend.async_panel_exists(hass, path)
     dashboard = hass.data[LOVELACE_DATA].dashboards[path]
     config = await dashboard.async_load(False)
+    assert config["title"] == NAME
+    assert dashboard.config["title"] == f"{NAME} · Development"
     assert await dashboard.async_get_info() == {"mode": "yaml", "views": 1}
     assert await dashboard.async_json(False) is not None
     rendered = [

@@ -1,10 +1,10 @@
-# T3 Code for Home Assistant
+# T3 Usage Monitor
 
-Track your T3 Code token usage, estimated USD cost, and subscription limits in
-Home Assistant. Sensors include daily and monthly totals, provider breakdowns,
-quota reset times, and cache savings.
+A Home Assistant integration that monitors token usage, estimated USD cost, and
+subscription limits from an existing T3 Code server. See daily and monthly
+totals, provider breakdowns, quota reset times, and cache savings.
 
-[![Open T3 Code in HACS to install](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=0libote&repository=T3-x-HA&category=integration)
+[![Install T3 Usage Monitor through HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=0libote&repository=T3-x-HA&category=integration)
 
 ## Install
 
@@ -14,7 +14,7 @@ other supported Home Assistant installations.
 
 1. Click the button above and open the repository in your Home Assistant instance.
 2. Select **Download** in HACS, then restart Home Assistant.
-3. Go to **Settings > Devices & services > Add integration** and choose **T3 Code**.
+3. Go to **Settings > Devices & services > Add integration** and choose **T3 Usage Monitor**.
 
 For installation without HACS, see the [manual install guide](docs/reference.md#manual-install).
 
@@ -36,7 +36,7 @@ connections are not supported; use your server's direct address and credential.
 
 ## Use it
 
-Open **T3 Code** in the Home Assistant sidebar. The dashboard shows cost and
+Open **T3 Usage Monitor** in the Home Assistant sidebar. The dashboard shows cost and
 tokens for today and this month, with quota gauges and reset times grouped by
 provider. Large token counts read as `54.8M tokens`, and costs use two decimals.
 It appears automatically after setup or an integration update and restart.
@@ -60,7 +60,7 @@ for details about incomplete history and unsupported accounts.
 
 Home Assistant prompts for a replacement when a token expires or is revoked.
 Use **Reconfigure** to change the address or credential for the same server.
-Add another T3 Code integration to connect a different server.
+Add another T3 Usage Monitor integration to connect a different server.
 
 To remove access, delete the integration and revoke its session in T3's access
 settings. Deleting the integration alone leaves that session active.
