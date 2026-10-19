@@ -36,15 +36,21 @@ connections are not supported; use your server's direct address and credential.
 
 ## Use it
 
-Add an Entities card to your dashboard and select sensors from the T3 Code
-device. Start with today's tokens, today's estimated cost, and your provider's
-remaining quota. You can use the same sensors in automations, such as a low-quota
-notification. [YAML examples](docs/reference.md#dashboard-and-notification-examples)
-are available for both.
+Open **T3 Code** in the Home Assistant sidebar. The dashboard shows cost and
+tokens for today and this month, with quota gauges and reset times grouped by
+provider. Large token counts read as `54.8M tokens`, and costs use two decimals.
+It appears automatically after setup or an integration update and restart.
+
+The main device page keeps four usage totals and each account's remaining
+quota. Detailed token breakdowns and per-provider costs are optional sensors.
+See [sensor details and upgrades](docs/reference.md#sensor-details-and-upgrades)
+to enable them. You can also use the sensors in your own cards and automations;
+[YAML examples](docs/reference.md#dashboard-and-notification-examples) cover both.
 
 Readings refresh every five minutes. Open the integration's **Options** to change
 that to any interval from 300 to 3600 seconds. Daily and monthly usage follows
 Home Assistant's time zone; quotas follow each provider's own windows.
+You can also turn the sidebar dashboard off in Options.
 
 Costs are API-equivalent estimates, not subscription bills. Missing or stale
 quotas show as unavailable. See [data and limits](docs/reference.md#data-and-limits)

@@ -9,6 +9,15 @@ from zoneinfo import ZoneInfo
 from .api import T3ProtocolError
 
 TOKEN_FIELDS = ("uncachedInputTokens", "cachedInputTokens", "cacheCreationTokens", "outputTokens")
+PROVIDER_NAMES = {
+    "codex": "Codex",
+    "claude": "Claude",
+    "opencode": "OpenCode",
+    "grok": "Grok",
+    "cursor": "Cursor",
+    "antigravity": "Antigravity",
+    "pi": "Pi",
+}
 
 
 @dataclass(frozen=True)
@@ -110,7 +119,7 @@ def normalize(
         for provider in [None, *sorted({b["provider"] for b in selected})]:
             group = [b for b in selected if provider is None or b["provider"] == provider]
             prefix = f"usage/{provider or 'all'}/{period}"
-            label = f"{provider.title()} " if provider else ""
+            label = f"{PROVIDER_NAMES.get(provider, provider)} " if provider else ""
             attrs = {
                 "period_start": start.isoformat(),
                 "period_end": today.isoformat(),
@@ -146,11 +155,28 @@ def normalize(
                 ),
             }
             for metric, (metric_label, value, kind) in values.items():
+                name = f"{label}{period.title()} {metric_label}"
+                if metric in ("tokens", "cost"):
+                    name = f"{label}{'Estimated cost' if metric == 'cost' else 'Tokens'} "
+                    name += "today" if period == "today" else "this month"
+                metric_attrs = dict(attrs)
+                if metric == "tokens":
+                    metric_attrs.update(
+                        {
+                            "input_tokens": sum(tokens[k] for k in TOKEN_FIELDS[:3]),
+                            "output_tokens": tokens["outputTokens"],
+                            "cache_read_tokens": tokens["cachedInputTokens"],
+                            "cache_write_tokens": tokens["cacheCreationTokens"],
+                            "reasoning_tokens": sum(b["totals"]["reasoningTokens"] for b in group),
+                        }
+                    )
+                elif metric == "cost":
+                    metric_attrs["cache_savings_usd"] = sum(b["cacheSavingsUsd"] for b in group)
                 readings[f"{prefix}/{metric}"] = Reading(
-                    f"{label}{period.title()} {metric_label}",
+                    name,
                     None if no_readable_sources else value,
                     kind,
-                    attrs,
+                    metric_attrs,
                     reset,
                 )
 
@@ -159,7 +185,8 @@ def normalize(
         limits = provider.get("usageLimits")
         if not isinstance(instance_id, str) or not isinstance(limits, dict):
             continue
-        label = provider.get("displayName") or provider.get("driver") or instance_id
+        driver = provider.get("driver")
+        label = provider.get("displayName") or PROVIDER_NAMES.get(driver, driver) or instance_id
         unavailable = limits_failed or bool(limits.get("unavailable"))
         attrs = {
             "provider": provider.get("driver"),
@@ -179,7 +206,15 @@ def normalize(
                 raise T3ProtocolError("T3 returned an invalid quota percentage")
             reset_at = _timestamp(window.get("resetsAt"))
             stale = reset_at is not None and reset_at <= now
-            window_attrs = {**attrs, "window": window.get("kind"), "stale": stale}
+            window_attrs = {
+                **attrs,
+                "window": window.get("kind"),
+                "stale": stale,
+                "provider_label": label,
+                "window_label": window.get("label") or window_id,
+                "resets_at": window.get("resetsAt"),
+                "used_percent": used,
+            }
             prefix = f"limit/{instance_id}/{window_id}"
             name = f"{label} {window.get('label') or window_id}"
             for metric, value in (("used", used), ("remaining", 100 - used)):

@@ -3,10 +3,11 @@
   "name": "T3 Code",
   "codeowners": ["@0libote"],
   "config_flow": true,
+  "dependencies": ["lovelace"],
   "documentation": "https://github.com/0libote/T3-x-HA",
   "integration_type": "service",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/0libote/T3-x-HA/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

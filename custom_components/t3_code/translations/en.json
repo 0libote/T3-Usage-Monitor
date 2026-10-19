@@ -46,9 +46,10 @@
   "options": {
     "step": {
       "init": {
-        "title": "T3 Code polling",
+        "title": "T3 Code display and polling",
         "data": {
-          "scan_interval": "Polling interval (seconds, 300\u20133600)"
+          "scan_interval": "Polling interval (seconds, 300\u20133600)",
+          "show_dashboard": "Show T3 Code dashboard in the sidebar"
         }
       }
     }

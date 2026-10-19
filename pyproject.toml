@@ -1,6 +1,6 @@
 [project]
 name = "t3-code-home-assistant"
-version = "0.1.0"
+version = "0.2.0"
 description = "T3 Code usage and subscription sensors for Home Assistant"
 requires-python = ">=3.14.2"
 

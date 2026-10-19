@@ -21,6 +21,7 @@ from .const import (
     CONF_CREDENTIAL,
     CONF_CREDENTIAL_TYPE,
     CONF_SCAN_INTERVAL,
+    CONF_SHOW_DASHBOARD,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -151,6 +152,10 @@ class T3OptionsFlow(config_entries.OptionsFlow):
                             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
                         ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=300, max=3600)),
+                    vol.Optional(
+                        CONF_SHOW_DASHBOARD,
+                        default=self.config_entry.options.get(CONF_SHOW_DASHBOARD, True),
+                    ): bool,
                 }
             ),
         )

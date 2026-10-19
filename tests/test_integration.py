@@ -14,6 +14,7 @@ from custom_components.t3_code.const import (
     CONF_CREDENTIAL,
     CONF_CREDENTIAL_TYPE,
     CONF_SCAN_INTERVAL,
+    CONF_SHOW_DASHBOARD,
     DOMAIN,
 )
 
@@ -162,4 +163,4 @@ async def test_options(hass, t3_server):
         result["flow_id"], {CONF_SCAN_INTERVAL: 600}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {CONF_SCAN_INTERVAL: 600}
+    assert entry.options == {CONF_SCAN_INTERVAL: 600, CONF_SHOW_DASHBOARD: True}

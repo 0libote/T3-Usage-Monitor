@@ -22,7 +22,7 @@ Use the T3 application's address or its HTTPS reverse-proxy address. A Docker
 setup console's `/_setup/` address will not work. Home Assistant must be able to
 reach the server directly, even if you use T3 Connect for other clients. Cloud
 account logins, relay discovery codes, and app landing-page URLs are not
-supported in version 0.1.0.
+supported in this version.
 
 ### Pairing link or token
 
@@ -66,6 +66,36 @@ into the credential field. Keep it private: Home Assistant saves it in the
 config entry, so configuration files and backups contain credentials. Use HTTPS
 or a trusted local network. TLS certificate verification is enabled.
 
+## Sensor details and upgrades
+
+Version 0.2 adds a T3 Code sidebar dashboard automatically. It uses built-in Home
+Assistant cards, with compact token counts, costs rounded to two decimals, and
+quota gauges grouped by account. Each connected server gets its own dashboard.
+You can hide it in the integration's Options. Your existing dashboards are left
+alone; use your own dashboard if you want to change the layout.
+
+On a new installation, the main sensors are today's and this month's total
+tokens and estimated cost, plus remaining quota for each reported window.
+Reset times are included on the quota sensors. Token totals also carry the
+input, output, and cache breakdowns as attributes. Raw values, token units,
+statistics, and automation thresholds keep their full precision; rounding and
+K/M/B abbreviations apply to the dashboard display.
+
+Separate input, output, cache, reasoning, per-provider cost, quota-used,
+reset-timestamp, and reset-credit sensors are disabled by default. To use one,
+open Settings > Devices & services > Entities, filter by T3 Code, and enable the
+sensor you want. These details are classified as diagnostic sensors.
+
+When upgrading from 0.1, existing detailed sensors stay active so automations
+and recorded history keep working. They move to Diagnostics and are hidden
+from automatically generated dashboards. Their IDs, custom names, precision
+settings, and user-disabled states are preserved. You can unhide them or disable
+ones you no longer need in the entity settings. The upgrade adjusts visibility
+once, so later visibility changes remain yours.
+
+To update an existing installation, download the update in HACS and restart Home
+Assistant, then open T3 Code in the sidebar.
+
 ## Dashboard and notification examples
 
 For a device named `Development`, an Entities card might look like this. Replace
@@ -101,7 +131,7 @@ actions:
 
 Each server gets one device. You can connect several servers, and new quota
 windows appear automatically. Usage and cost sensors cover all accounts in T3's
-summary and are also available per provider when it has history in the period.
+summary. Optional per-provider sensors are available when it has history in the period.
 Quota sensors belong to each configured provider instance, including additional
 accounts. Sensors support dashboards, history, statistics, and automations.
 
@@ -156,7 +186,7 @@ uv run pytest -q
 uv run python scripts/package.py
 ```
 
-Validation against Home Assistant 2026.10.2: 45 tests passing, 93% integration
+Validation against Home Assistant 2026.10.2: 61 tests passing, 94% integration
 coverage, and Ruff and hassfest passing.
 
 The tests use Home Assistant with a local HTTP/WebSocket fixture. They cover

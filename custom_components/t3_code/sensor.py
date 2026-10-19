@@ -10,6 +10,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import T3ConfigEntry
 from .const import DOMAIN
 from .coordinator import T3Coordinator
+from .presentation import is_diagnostic, is_primary
 
 PARALLEL_UPDATES = 0
 
@@ -43,6 +44,7 @@ class T3Sensor(CoordinatorEntity[T3Coordinator], SensorEntity):
         environment = coordinator.data.environment
         self._attr_unique_id = f"{environment['environmentId']}/{key}"
         self._attr_name = reading.name
+        self._attr_entity_registry_enabled_default = is_primary(key) or is_diagnostic(key)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, environment["environmentId"])},
             name=environment.get("label", "T3 Code"),
@@ -51,7 +53,7 @@ class T3Sensor(CoordinatorEntity[T3Coordinator], SensorEntity):
             sw_version=environment.get("serverVersion"),
             configuration_url=coordinator.client.url,
         )
-        self._attr_icon = "mdi:code-braces"
+        self._attr_icon = "mdi:counter" if reading.kind == "tokens" else "mdi:code-braces"
         if reading.kind in ("money", "tokens"):
             # T3 may revise estimates downward. TOTAL + a calendar last_reset
             # handles that without inventing consumption on a counter decrease.
@@ -59,14 +61,16 @@ class T3Sensor(CoordinatorEntity[T3Coordinator], SensorEntity):
             self._attr_native_unit_of_measurement = "USD" if reading.kind == "money" else "tokens"
             if reading.kind == "money":
                 self._attr_device_class = SensorDeviceClass.MONETARY
-                self._attr_suggested_display_precision = 4
+                self._attr_suggested_display_precision = 2
+                self._attr_icon = "mdi:currency-usd"
         elif reading.kind == "percent":
             self._attr_native_unit_of_measurement = "%"
             self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_suggested_display_precision = 1
+            self._attr_suggested_display_precision = 0
+            self._attr_icon = "mdi:gauge"
         elif reading.kind == "timestamp":
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        if reading.kind == "status" or key == "last_read":
+        if not is_primary(key):
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property

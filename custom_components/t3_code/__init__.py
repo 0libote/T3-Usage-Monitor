@@ -8,6 +8,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import T3Client
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
 from .coordinator import T3Coordinator
+from .dashboard import async_register_dashboard
+from .presentation import async_prepare_registry
 
 type T3ConfigEntry = ConfigEntry[T3Coordinator]
 PLATFORMS = [Platform.SENSOR]
@@ -21,7 +23,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: T3ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    async_prepare_registry(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_register_dashboard(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
 
