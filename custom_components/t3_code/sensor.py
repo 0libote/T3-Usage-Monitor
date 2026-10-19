@@ -1,5 +1,7 @@
 """Usage, cost, quota, and reset sensors."""
 
+import asyncio
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -19,6 +21,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: T3ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Add new provider/window entities when they appear after setup."""
+    # hass is required by HA's platform signature; the coordinator owns updates.
+    _ = hass
     coordinator = entry.runtime_data
     known: set[str] = set()
 
@@ -30,6 +34,8 @@ async def async_setup_entry(
 
     add_missing()
     entry.async_on_unload(coordinator.async_add_listener(add_missing))
+    # Setup itself is synchronous; yield once to keep the async entry point honest.
+    await asyncio.sleep(0)
 
 
 class T3Sensor(CoordinatorEntity[T3Coordinator], SensorEntity):

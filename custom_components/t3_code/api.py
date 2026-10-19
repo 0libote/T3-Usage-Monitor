@@ -66,12 +66,14 @@ class T3Client:
     async def descriptor(self) -> dict[str, Any]:
         """Discover identity and the WebSocket protocol without sending a secret."""
         try:
-            async with asyncio.timeout(15):
-                async with self.session.get(
+            async with (
+                asyncio.timeout(15),
+                self.session.get(
                     f"{self.url}/.well-known/t3/environment", allow_redirects=False
-                ) as response:
-                    _check_status(response.status)
-                    data = await response.json()
+                ) as response,
+            ):
+                _check_status(response.status)
+                data = await response.json()
             if (
                 not isinstance(data, dict)
                 or not isinstance(data.get("environmentId"), str)
@@ -96,16 +98,18 @@ class T3Client:
             "client_os": "Home Assistant OS",
         }
         try:
-            async with asyncio.timeout(15):
-                async with self.session.post(
+            async with (
+                asyncio.timeout(15),
+                self.session.post(
                     f"{self.url}/oauth/token", data=form, allow_redirects=False
-                ) as response:
-                    if response.status == 400:
-                        raise T3AuthError(
-                            "Pairing token is invalid, expired, used, or lacks read scopes"
-                        )
-                    _check_status(response.status)
-                    data = await response.json()
+                ) as response,
+            ):
+                if response.status == 400:
+                    raise T3AuthError(
+                        "Pairing token is invalid, expired, used, or lacks read scopes"
+                    )
+                _check_status(response.status)
+                data = await response.json()
             if not isinstance(data, dict) or not isinstance(data.get("access_token"), str):
                 raise T3ProtocolError("T3 did not return a bearer session")
             if data.get("token_type") != "Bearer" or not data["access_token"]:
@@ -119,15 +123,21 @@ class T3Client:
     async def rpc(self, descriptor: dict[str, Any]):
         """Open a short-lived socket; close it on success, failure, or cancellation."""
         version = descriptor["orchestrationProtocolVersion"]
-        ws_url = self.url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        # http(s) origins use ws(s) sockets; plain ws only arises from a user-supplied
+        # http origin (typically loopback/LAN), wss from https. NOSONAR: not hardcoded.
+        ws_url = self.url.replace("https://", "wss://", 1).replace(
+            "http://", "ws://", 1
+        )  # NOSONAR (python:S5332)
         try:
-            async with asyncio.timeout(180):
-                async with self.session.ws_connect(
+            async with (
+                asyncio.timeout(180),
+                self.session.ws_connect(
                     f"{ws_url}/ws?orchestrationProtocol={version}",
                     headers={"Authorization": f"Bearer {self.token}"},
                     max_msg_size=16 * 1024 * 1024,
-                ) as socket:
-                    yield T3Rpc(socket)
+                ) as socket,
+            ):
+                yield T3Rpc(socket)
         except WSServerHandshakeError as err:
             _check_status(err.status)
             raise T3Error("Could not open the T3 connection") from err
@@ -142,6 +152,59 @@ class T3Rpc:
         self.socket = socket
         self.next_id = 0
 
+    @staticmethod
+    def _is_auth_failure(causes: Any) -> bool:
+        """Check whether an Exit cause denies read permissions."""
+        if isinstance(causes, dict):
+            causes = [causes]
+        if not isinstance(causes, list):
+            return False
+        return any(
+            isinstance(cause, dict)
+            and isinstance(cause.get("error"), dict)
+            and cause["error"].get("_tag") == "EnvironmentAuthorizationError"
+            for cause in causes
+        )
+
+    @staticmethod
+    def _exit_value(data: dict[str, Any], request_id: str) -> tuple[bool, Any]:
+        """Return (done, value) for an Exit frame, else (False, None) to skip."""
+        if str(data.get("requestId")) != request_id or data.get("_tag") != "Exit":
+            return False, None
+        result = data.get("exit", {})
+        if result.get("_tag") == "Success":
+            return True, result.get("value")
+        if T3Rpc._is_auth_failure(result.get("cause", [])):
+            raise T3AuthError("T3 token lacks the required read permissions")
+        raise T3Error("T3 could not complete the usage request")
+
+    @staticmethod
+    def _parse_frame(line: str) -> dict[str, Any]:
+        """Decode one NDJSON line or raise a protocol error."""
+        data = json.loads(line)
+        if not isinstance(data, dict):
+            raise T3ProtocolError("T3 returned an invalid RPC message")
+        return data
+
+    async def _receive_value(self, request_id: str) -> Any:
+        """Read frames until this request's Exit, answering server pings."""
+        while True:
+            message = await self.socket.receive()
+            if message.type != WSMsgType.TEXT:
+                raise T3Error("T3 closed the connection before answering")
+            for line in message.data.splitlines():
+                if not line.strip():
+                    continue
+                data = self._parse_frame(line)
+                if data.get("_tag") == "Ping":
+                    await self.socket.send_json({"_tag": "Pong"})
+                    continue
+                if data.get("_tag") == "Defect":
+                    raise T3ProtocolError("T3 could not decode the usage request")
+                done, value = self._exit_value(data, request_id)
+                if done:
+                    return value
+
     async def call(self, method: str, payload: dict[str, Any]) -> Any:
         """Read one RPC result without starting a subscription or agent run."""
         self.next_id += 1
@@ -151,36 +214,7 @@ class T3Rpc:
         )
         try:
             async with asyncio.timeout(90):
-                while True:
-                    message = await self.socket.receive()
-                    if message.type != WSMsgType.TEXT:
-                        raise T3Error("T3 closed the connection before answering")
-                    for line in message.data.splitlines():
-                        if not line.strip():
-                            continue
-                        data = json.loads(line)
-                        if not isinstance(data, dict):
-                            raise T3ProtocolError("T3 returned an invalid RPC message")
-                        if data.get("_tag") == "Ping":
-                            await self.socket.send_json({"_tag": "Pong"})
-                            continue
-                        if data.get("_tag") == "Defect":
-                            raise T3ProtocolError("T3 could not decode the usage request")
-                        if str(data.get("requestId")) != request_id or data.get("_tag") != "Exit":
-                            continue
-                        result = data.get("exit", {})
-                        if result.get("_tag") == "Success":
-                            return result.get("value")
-                        causes = result.get("cause", [])
-                        if isinstance(causes, dict):
-                            causes = [causes]
-                        if any(
-                            cause.get("error", {}).get("_tag") == "EnvironmentAuthorizationError"
-                            for cause in causes
-                            if isinstance(cause, dict) and isinstance(cause.get("error", {}), dict)
-                        ):
-                            raise T3AuthError("T3 token lacks the required read permissions")
-                        raise T3Error("T3 could not complete the usage request")
+                return await self._receive_value(request_id)
         except TimeoutError as err:
             raise T3Error("T3 timed out while answering the usage request") from err
         except (ValueError, TypeError, AttributeError) as err:

@@ -68,10 +68,9 @@ async def test_identity_checked_before_sending_token(t3_server):
 async def test_auth_failures_are_safe(t3_server, failure):
     t3_server[failure] = True
     async with ClientSession() as session:
+        client = T3Client(session, t3_server["url"], "session-secret")
         with pytest.raises(T3AuthError) as error:
-            await fetch_snapshot(
-                T3Client(session, t3_server["url"], "session-secret"), "UTC", "test-server"
-            )
+            await fetch_snapshot(client, "UTC", "test-server")
     assert "secret" not in str(error.value)
 
 
@@ -88,8 +87,9 @@ async def test_failed_probe_preserves_usage_but_disables_limits(t3_server):
 
 async def test_pairing_rejection(t3_server):
     async with ClientSession() as session:
+        client = T3Client(session, t3_server["url"])
         with pytest.raises(T3AuthError):
-            await T3Client(session, t3_server["url"]).pair("wrong")
+            await client.pair("wrong")
 
 
 async def test_redirect_never_forwards_pairing_secret(aiohttp_server, t3_server):
@@ -99,14 +99,17 @@ async def test_redirect_never_forwards_pairing_secret(aiohttp_server, t3_server)
     app = web.Application()
     app.router.add_post("/oauth/token", redirect)
     server = await aiohttp_server(app)
+    url = str(server.make_url("")).rstrip("/")
     async with ClientSession() as session:
+        client = T3Client(session, url)
         with pytest.raises(T3Error):
-            await T3Client(session, str(server.make_url("")).rstrip("/")).pair("pair-secret")
+            await client.pair("pair-secret")
     assert t3_server["pair_count"] == 0
 
 
 async def test_unknown_protocol(t3_server):
     t3_server["descriptor"]["orchestrationProtocolVersion"] = 999
     async with ClientSession() as session:
+        client = T3Client(session, t3_server["url"])
         with pytest.raises(T3ProtocolError):
-            await T3Client(session, t3_server["url"]).descriptor()
+            await client.descriptor()

@@ -61,12 +61,14 @@ def test_expired_quota_stale(descriptor, summary, providers, now):
 @pytest.mark.parametrize("field,value", [("contractVersion", 99), ("buckets", None)])
 def test_incompatible_contract(descriptor, summary, now, field, value):
     summary[field] = value
+    today = now.date()
     with pytest.raises(T3ProtocolError):
-        normalize(descriptor, summary, [], now.date(), "UTC", now)
+        normalize(descriptor, summary, [], today, "UTC", now)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -1, True, "100"])
 def test_malformed_tokens(descriptor, summary, now, value):
     summary["buckets"][0]["totals"]["outputTokens"] = value
+    today = now.date()
     with pytest.raises(T3ProtocolError):
-        normalize(descriptor, summary, [], now.date(), "UTC", now)
+        normalize(descriptor, summary, [], today, "UTC", now)

@@ -15,14 +15,16 @@ async def test_invalid_message(message):
         send_json=AsyncMock(),
         receive=AsyncMock(return_value=SimpleNamespace(type=WSMsgType.TEXT, data=message)),
     )
+    rpc = T3Rpc(socket)
     with pytest.raises(T3ProtocolError):
-        await T3Rpc(socket).call("server.getUsageSummary", {})
+        await rpc.call("server.getUsageSummary", {})
 
 
 async def test_timeout_is_recoverable_t3_error():
     socket = SimpleNamespace(send_json=AsyncMock(), receive=AsyncMock(side_effect=TimeoutError))
+    rpc = T3Rpc(socket)
     with pytest.raises(T3Error, match="timed out"):
-        await T3Rpc(socket).call("server.refreshProviders", {})
+        await rpc.call("server.refreshProviders", {})
 
 
 async def test_closed_socket():
@@ -30,5 +32,6 @@ async def test_closed_socket():
         send_json=AsyncMock(),
         receive=AsyncMock(return_value=SimpleNamespace(type=WSMsgType.CLOSED)),
     )
+    rpc = T3Rpc(socket)
     with pytest.raises(T3Error, match="closed"):
-        await T3Rpc(socket).call("server.refreshProviders", {})
+        await rpc.call("server.refreshProviders", {})

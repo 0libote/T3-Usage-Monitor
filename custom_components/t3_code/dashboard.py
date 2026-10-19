@@ -14,6 +14,8 @@ from .const import CONF_SHOW_DASHBOARD, DOMAIN, NAME
 
 LOGGER = logging.getLogger(__name__)
 
+UNAVAILABLE_ENTITY = "sensor.t3_unavailable"
+
 FORMAT_TOKENS = """{% macro tokens(value) -%}
 {% if not is_number(value) %}Unavailable
 {% elif value | float >= 1000000000 %}{{ '%.1f' | format(value | float / 1000000000) }}B tokens
@@ -25,8 +27,8 @@ FORMAT_TOKENS = """{% macro tokens(value) -%}
 
 def summary_card(period: str, entities: dict[str, str]) -> dict:
     """Use templates for readable numbers, keeping raw sensor units unchanged."""
-    cost = entities.get(f"usage/all/{period}/cost", "sensor.t3_unavailable")
-    tokens = entities.get(f"usage/all/{period}/tokens", "sensor.t3_unavailable")
+    cost = entities.get(f"usage/all/{period}/cost", UNAVAILABLE_ENTITY)
+    tokens = entities.get(f"usage/all/{period}/tokens", UNAVAILABLE_ENTITY)
     title = "Today" if period == "today" else "This month"
     return {
         "type": "markdown",
@@ -65,9 +67,9 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
     ]
     # Warnings use templates so a failed refresh cannot leave a good-looking
     # cached total on the page without an explanation.
-    status = entities.get("usage_status", "sensor.t3_unavailable")
-    limits_status = entities.get("limits_status", "sensor.t3_unavailable")
-    cost = entities.get("usage/all/month/cost", "sensor.t3_unavailable")
+    status = entities.get("usage_status", UNAVAILABLE_ENTITY)
+    limits_status = entities.get("limits_status", UNAVAILABLE_ENTITY)
+    cost = entities.get("usage/all/month/cost", UNAVAILABLE_ENTITY)
     cards.append(
         {
             "type": "markdown",

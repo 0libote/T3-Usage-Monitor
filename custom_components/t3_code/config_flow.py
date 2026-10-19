@@ -56,49 +56,60 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
+    async def _check_identity(self, identity: str) -> FlowResult | None:
+        """Abort when reauth/reconfigure targets a different server."""
+        if self.source == config_entries.SOURCE_REAUTH:
+            if identity != self._get_reauth_entry().unique_id:
+                return self.async_abort(reason="wrong_server")
+        elif self.source == config_entries.SOURCE_RECONFIGURE:
+            if identity != self._get_reconfigure_entry().unique_id:
+                return self.async_abort(reason="wrong_server")
+        else:
+            await self.async_set_unique_id(identity)
+            self._abort_if_unique_id_configured()
+        return None
+
+    async def _ensure_token(
+        self, client: T3Client, url: str, credential: str, credential_type: str
+    ) -> None:
+        """Exchange a pairing token once; reuse the bearer within this flow."""
+        # A successful exchange consumes a pairing token. If probing metrics
+        # fails, retain the bearer in this flow so a retry doesn't consume it again.
+        cache_key = (url, credential, credential_type)
+        if self._pending_auth and self._pending_auth[:3] == cache_key:
+            client.token = self._pending_auth[3]
+        elif credential_type == "pairing":
+            await client.pair(credential)
+            self._pending_auth = (*cache_key, client.token)
+        elif credential_type == "bearer":
+            client.token = credential
+        else:
+            raise ValueError("Unknown credential type")
+
+    def _finish(self, data: dict[str, Any], title: str) -> FlowResult:
+        """Create or update the entry after a successful probe."""
+        if self.source == config_entries.SOURCE_REAUTH:
+            return self.async_update_reload_and_abort(self._get_reauth_entry(), data_updates=data)
+        if self.source == config_entries.SOURCE_RECONFIGURE:
+            return self.async_update_reload_and_abort(
+                self._get_reconfigure_entry(), data_updates=data
+            )
+        return self.async_create_entry(title=title, data=data)
+
     async def _connect(self, user_input: dict[str, Any], step_id: str) -> FlowResult:
         errors: dict[str, str] = {}
         try:
             url, credential = parse_connection(
                 user_input[CONF_URL], user_input.get(CONF_CREDENTIAL, "")
             )
-            credential_type = user_input[CONF_CREDENTIAL_TYPE]
             client = T3Client(async_get_clientsession(self.hass), url)
             descriptor = await client.descriptor()
-            identity = descriptor["environmentId"]
-            if self.source == config_entries.SOURCE_REAUTH:
-                if identity != self._get_reauth_entry().unique_id:
-                    return self.async_abort(reason="wrong_server")
-            elif self.source == config_entries.SOURCE_RECONFIGURE:
-                if identity != self._get_reconfigure_entry().unique_id:
-                    return self.async_abort(reason="wrong_server")
-            else:
-                await self.async_set_unique_id(identity)
-                self._abort_if_unique_id_configured()
-
-            # A successful exchange consumes a pairing token. If probing metrics
-            # fails, retain the bearer in this flow so a retry doesn't consume it again.
-            cache_key = (url, credential, credential_type)
-            if self._pending_auth and self._pending_auth[:3] == cache_key:
-                client.token = self._pending_auth[3]
-            elif credential_type == "pairing":
-                await client.pair(credential)
-                self._pending_auth = (*cache_key, client.token)
-            elif credential_type == "bearer":
-                client.token = credential
-            else:
-                raise ValueError("Unknown credential type")
-            await fetch_snapshot(client, self.hass.config.time_zone, identity)
+            if abort := await self._check_identity(descriptor["environmentId"]):
+                return abort
+            await self._ensure_token(client, url, credential, user_input[CONF_CREDENTIAL_TYPE])
+            await fetch_snapshot(client, self.hass.config.time_zone, descriptor["environmentId"])
             data = {CONF_URL: url, CONF_TOKEN: client.token}
-            if self.source == config_entries.SOURCE_REAUTH:
-                return self.async_update_reload_and_abort(
-                    self._get_reauth_entry(), data_updates=data
-                )
-            if self.source == config_entries.SOURCE_RECONFIGURE:
-                return self.async_update_reload_and_abort(
-                    self._get_reconfigure_entry(), data_updates=data
-                )
-            return self.async_create_entry(title=descriptor.get("label", "T3 Code"), data=data)
+            return self._finish(data, descriptor.get("label", "T3 Code"))
         except ValueError:
             errors["base"] = "invalid_connection"
         except T3AuthError:
