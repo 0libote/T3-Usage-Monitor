@@ -222,6 +222,49 @@ def _build_provider_readings(
         )
 
 
+def _add_window(
+    readings: dict[str, Reading],
+    instance_id: str,
+    window: dict[str, Any],
+    label: str,
+    attrs: dict[str, Any],
+    unavailable: bool,
+    now: datetime,
+) -> None:
+    """Add used/remaining/reset sensors for a single quota window."""
+    window_id = window.get("id")
+    used = window.get("usedPercent")
+    if not isinstance(window_id, str) or used is None:
+        return
+    used = _number(used)
+    if used > 100:
+        raise T3ProtocolError("T3 returned an invalid quota percentage")
+    reset_at = _timestamp(window.get("resetsAt"))
+    stale = reset_at is not None and reset_at <= now
+    window_label = window.get("label") or window_id
+    window_attrs = {
+        **attrs,
+        "window": window.get("kind"),
+        "stale": stale,
+        "provider_label": label,
+        "window_label": window_label,
+        "resets_at": window.get("resetsAt"),
+        "used_percent": used,
+    }
+    prefix = f"limit/{instance_id}/{window_id}"
+    name = f"{label} {window_label}"
+    for metric, value in (("used", used), ("remaining", 100 - used)):
+        readings[f"{prefix}/{metric}"] = Reading(
+            f"{name} {metric}",
+            None if unavailable or stale else value,
+            "percent",
+            window_attrs,
+        )
+    readings[f"{prefix}/reset"] = Reading(
+        f"{name} reset", None if unavailable else reset_at, "timestamp", window_attrs
+    )
+
+
 def _window_readings(
     readings: dict[str, Reading],
     provider: dict[str, Any],
@@ -236,36 +279,7 @@ def _window_readings(
         return
     instance_id = provider.get("instanceId")
     for window in limits.get("windows", []):
-        window_id = window.get("id")
-        used = window.get("usedPercent")
-        if not isinstance(window_id, str) or used is None:
-            continue
-        used = _number(used)
-        if used > 100:
-            raise T3ProtocolError("T3 returned an invalid quota percentage")
-        reset_at = _timestamp(window.get("resetsAt"))
-        stale = reset_at is not None and reset_at <= now
-        window_attrs = {
-            **attrs,
-            "window": window.get("kind"),
-            "stale": stale,
-            "provider_label": label,
-            "window_label": window.get("label") or window_id,
-            "resets_at": window.get("resetsAt"),
-            "used_percent": used,
-        }
-        prefix = f"limit/{instance_id}/{window_id}"
-        name = f"{label} {window.get('label') or window_id}"
-        for metric, value in (("used", used), ("remaining", 100 - used)):
-            readings[f"{prefix}/{metric}"] = Reading(
-                f"{name} {metric}",
-                None if unavailable or stale else value,
-                "percent",
-                window_attrs,
-            )
-        readings[f"{prefix}/reset"] = Reading(
-            f"{name} reset", None if unavailable else reset_at, "timestamp", window_attrs
-        )
+        _add_window(readings, instance_id, window, label, attrs, unavailable, now)
 
 
 def _credits_reading(

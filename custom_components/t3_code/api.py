@@ -124,10 +124,8 @@ class T3Client:
         """Open a short-lived socket; close it on success, failure, or cancellation."""
         version = descriptor["orchestrationProtocolVersion"]
         # http(s) origins use ws(s) sockets; plain ws only arises from a user-supplied
-        # http origin (typically loopback/LAN), wss from https. NOSONAR: not hardcoded.
-        ws_url = self.url.replace("https://", "wss://", 1).replace(
-            "http://", "ws://", 1
-        )  # NOSONAR (python:S5332)
+        # http origin (typically loopback/LAN), wss from https (not hardcoded).
+        ws_url = self.url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)  # NOSONAR
         try:
             async with (
                 asyncio.timeout(180),
@@ -186,24 +184,31 @@ class T3Rpc:
             raise T3ProtocolError("T3 returned an invalid RPC message")
         return data
 
+    async def _scan_message(self, message: Any, request_id: str) -> tuple[bool, Any]:
+        """Scan one frame; return (True, value) when this request exits."""
+        for line in message.data.splitlines():
+            if not line.strip():
+                continue
+            data = self._parse_frame(line)
+            if data.get("_tag") == "Ping":
+                await self.socket.send_json({"_tag": "Pong"})
+                continue
+            if data.get("_tag") == "Defect":
+                raise T3ProtocolError("T3 could not decode the usage request")
+            done, value = self._exit_value(data, request_id)
+            if done:
+                return True, value
+        return False, None
+
     async def _receive_value(self, request_id: str) -> Any:
         """Read frames until this request's Exit, answering server pings."""
         while True:
             message = await self.socket.receive()
             if message.type != WSMsgType.TEXT:
                 raise T3Error("T3 closed the connection before answering")
-            for line in message.data.splitlines():
-                if not line.strip():
-                    continue
-                data = self._parse_frame(line)
-                if data.get("_tag") == "Ping":
-                    await self.socket.send_json({"_tag": "Pong"})
-                    continue
-                if data.get("_tag") == "Defect":
-                    raise T3ProtocolError("T3 could not decode the usage request")
-                done, value = self._exit_value(data, request_id)
-                if done:
-                    return value
+            done, value = await self._scan_message(message, request_id)
+            if done:
+                return value
 
     async def call(self, method: str, payload: dict[str, Any]) -> Any:
         """Read one RPC result without starting a subscription or agent run."""

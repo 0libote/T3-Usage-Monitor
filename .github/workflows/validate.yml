@@ -19,11 +19,7 @@ jobs:
       - uses: astral-sh/setup-uv@c97f06e356bcca1b426f396ef93ec35ce149ce7b # v7.1.6
         with:
           version: '0.12.23'
-      - run: uv sync --locked --group dev
-      - run: uv run --locked ruff check custom_components tests scripts
-      - run: uv run --locked ruff format --check custom_components tests scripts
-      - run: uv run --locked pytest -q
-      - run: uv run --locked python scripts/package.py
+      - run: bash scripts/ci.sh
   hassfest:
     runs-on: ubuntu-latest
     steps:
