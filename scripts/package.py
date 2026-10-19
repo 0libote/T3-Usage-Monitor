@@ -13,6 +13,8 @@ with ZipFile(destination, "w", compression=ZIP_DEFLATED) as archive:
             archive.write(path, path.relative_to(component.parent))
     archive.write(root / "LICENSE", "t3_code/LICENSE")
 with ZipFile(destination) as archive:
-    assert archive.testzip() is None
-    assert "t3_code/manifest.json" in archive.namelist()
+    if archive.testzip() is not None:
+        raise AssertionError()
+    if "t3_code/manifest.json" not in archive.namelist():
+        raise AssertionError()
 print(destination)
