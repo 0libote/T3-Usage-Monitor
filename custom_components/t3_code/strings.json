@@ -1,0 +1,64 @@
+{
+  "title": "T3 Code",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to T3 Code",
+        "description": "Connect to an existing T3 Code server. Paste its /pair#token=... link, or enter the server URL and a pairing token. For a token issued by t3 auth session issue, select Bearer token. The address must be reachable from Home Assistant.",
+        "data": {
+          "url": "T3 server URL or pairing link",
+          "credential_type": "Credential type",
+          "credential": "Pairing token or bearer token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Connect to T3 Code",
+        "description": "The T3 session expired or was revoked. Enter a new pairing link/token or bearer token for the same server.",
+        "data": {
+          "url": "T3 server URL or pairing link",
+          "credential_type": "Credential type",
+          "credential": "Pairing token or bearer token"
+        }
+      },
+      "reconfigure": {
+        "title": "Connect to T3 Code",
+        "description": "Update the address or credential for this T3 server. Supply a new pairing link/token or bearer token; the server identity must match.",
+        "data": {
+          "url": "T3 server URL or pairing link",
+          "credential_type": "Credential type",
+          "credential": "Pairing token or bearer token"
+        }
+      }
+    },
+    "error": {
+      "invalid_connection": "Enter an http(s) server URL or a /pair#token=... link and a credential.",
+      "invalid_auth": "Authentication failed. Use a fresh pairing token or a valid bearer token with orchestration:read and diagnostics:read permissions.",
+      "cannot_connect": "Could not read T3 metrics. Check that Home Assistant can reach the server and retry. If pairing succeeded, this form will reuse that session.",
+      "unsupported_server": "The server returned an unsupported protocol or usage response. This integration supports T3 orchestration protocols 1\u20132 and usage contracts 4\u20136."
+    },
+    "abort": {
+      "already_configured": "This T3 server is already configured.",
+      "wrong_server": "This is a different T3 server. Add it as a new integration.",
+      "reauth_successful": "T3 credentials updated.",
+      "reconfigure_successful": "T3 connection updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "T3 Code polling",
+        "data": {
+          "scan_interval": "Polling interval (seconds, 300\u20133600)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "credential_type": {
+      "options": {
+        "pairing": "Pairing token / link",
+        "bearer": "Bearer token"
+      }
+    }
+  }
+}
