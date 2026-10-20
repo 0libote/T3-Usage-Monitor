@@ -1,0 +1,50 @@
+{
+  "contractVersion": 5,
+  "readAt": "2026-10-19T12:00:00Z",
+  "timeZone": "UTC",
+  "sinceDay": "2026-10-01",
+  "untilDay": "2026-10-19",
+  "buckets": [
+    {
+      "day": "2026-10-19",
+      "provider": "codex",
+      "model": "test-model",
+      "totals": {
+        "uncachedInputTokens": 100,
+        "cachedInputTokens": 200,
+        "cacheCreationTokens": 20,
+        "outputTokens": 50,
+        "reasoningTokens": 30
+      },
+      "costUsd": 0.01,
+      "cacheSavingsUsd": 0.002,
+      "unpricedRecords": 0,
+      "costSource": "modelPriced",
+      "records": 1,
+      "sessions": 1
+    }
+  ],
+  "sources": [
+    {
+      "status": "ok",
+      "fingerprint": {
+        "hostId": "test-host",
+        "provider": "codex",
+        "resolvedHomePath": "/sanitized/home",
+        "volumeId": "1:1"
+      },
+      "scannedFiles": 1,
+      "skippedFiles": 0,
+      "malformedRecords": 0,
+      "distinctSessions": 1,
+      "message": null
+    }
+  ],
+  "pricing": {
+    "status": "fresh",
+    "source": "test-prices",
+    "fetchedAt": "2026-10-19T12:00:00Z",
+    "knownModels": 1
+  },
+  "scanDurationMs": 1
+}

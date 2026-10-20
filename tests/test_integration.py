@@ -164,3 +164,13 @@ async def test_options(hass, t3_server):
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options == {CONF_SCAN_INTERVAL: 600, CONF_SHOW_DASHBOARD: True}
+
+
+async def test_pairing_rejects_null_usage_response(hass, t3_server):
+    t3_server["summary"] = None
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}, data=credentials(t3_server)
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "unsupported_server"}
+    assert t3_server["pair_count"] == 1

@@ -1,12 +1,13 @@
 """Normalize T3 contracts into sensors without double-counting tokens."""
 
-from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, time, timedelta
 from math import isfinite
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .api import T3ProtocolError
+from .const import MAX_QUOTA_AGE
 
 TOKEN_FIELDS = ("uncachedInputTokens", "cachedInputTokens", "cacheCreationTokens", "outputTokens")
 PROVIDER_NAMES = {
@@ -29,6 +30,7 @@ class Reading:
     kind: str
     attributes: dict[str, Any] = field(default_factory=dict)
     last_reset: datetime | None = None
+    expires_at: datetime | None = None
 
 
 @dataclass
@@ -37,6 +39,7 @@ class Snapshot:
 
     environment: dict[str, Any]
     readings: dict[str, Reading]
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 def _number(value: Any) -> float | int:
@@ -230,77 +233,66 @@ def _add_window(
     attrs: dict[str, Any],
     unavailable: bool,
     now: datetime,
-) -> None:
-    """Add used/remaining/reset sensors for a single quota window."""
+    checked_expiry: datetime | None,
+) -> datetime | None:
+    """Add a quota window which expires at its reset or maximum reading age."""
     window_id = window.get("id")
     used = window.get("usedPercent")
     if not isinstance(window_id, str) or used is None:
-        return
+        return None
     used = _number(used)
     if used > 100:
         raise T3ProtocolError("T3 returned an invalid quota percentage")
     reset_at = _timestamp(window.get("resetsAt"))
-    stale = reset_at is not None and reset_at <= now
-    window_label = window.get("label") or window_id
+    deadlines = [stamp for stamp in (reset_at, checked_expiry) if stamp is not None]
+    expires_at = min(deadlines) if deadlines else None
+    stale = bool(attrs["stale"]) or (expires_at is not None and expires_at <= now)
     window_attrs = {
         **attrs,
         "window": window.get("kind"),
         "stale": stale,
+        "unavailable_reason": attrs["unavailable_reason"] or ("stale" if stale else None),
         "provider_label": label,
-        "window_label": window_label,
-        "resets_at": window.get("resetsAt"),
+        "window_label": window.get("label") or window_id,
+        "resets_at": window.get("resetsAt") if reset_at else None,
         "used_percent": used,
     }
     prefix = f"limit/{instance_id}/{window_id}"
-    name = f"{label} {window_label}"
-    for metric, value in (("used", used), ("remaining", 100 - used)):
+    name = f"{label} {window_attrs['window_label']}"
+    for metric, value, kind in (
+        ("used", used, "percent"),
+        ("remaining", 100 - used, "percent"),
+        ("reset", reset_at, "timestamp"),
+    ):
         readings[f"{prefix}/{metric}"] = Reading(
             f"{name} {metric}",
             None if unavailable or stale else value,
-            "percent",
+            kind,
             window_attrs,
+            expires_at=expires_at,
         )
-    readings[f"{prefix}/reset"] = Reading(
-        f"{name} reset", None if unavailable else reset_at, "timestamp", window_attrs
+    return expires_at
+
+
+def _limits_status(accounts: list[dict[str, Any]], refresh_failed: bool) -> Reading:
+    """Distinguish partial failures, stale readings, and unsupported accounts."""
+    statuses = {account["status"] for account in accounts}
+    if refresh_failed:
+        status = "failed"
+    elif "failed" in statuses:
+        status = "partial" if "ok" in statuses else "failed"
+    elif "stale" in statuses:
+        status = "partial" if "ok" in statuses else "stale"
+    elif statuses == {"unsupported"}:
+        status = "unsupported"
+    else:
+        status = "ok"
+    return Reading(
+        "Limits refresh status",
+        status,
+        "status",
+        {"accounts": accounts, "refresh_failed": refresh_failed},
     )
-
-
-def _window_readings(
-    readings: dict[str, Reading],
-    provider: dict[str, Any],
-    label: str,
-    attrs: dict[str, Any],
-    unavailable: bool,
-    now: datetime,
-) -> None:
-    """Add used/remaining/reset sensors for each quota window."""
-    limits = provider.get("usageLimits")
-    if not isinstance(limits, dict):
-        return
-    instance_id = provider.get("instanceId")
-    for window in limits.get("windows", []):
-        _add_window(readings, instance_id, window, label, attrs, unavailable, now)
-
-
-def _credits_reading(
-    readings: dict[str, Reading],
-    provider: dict[str, Any],
-    label: str,
-    attrs: dict[str, Any],
-    unavailable: bool,
-) -> None:
-    """Add the reset-credit sensor when the server reports one."""
-    limits = provider.get("usageLimits")
-    if not isinstance(limits, dict):
-        return
-    reset_credits = limits.get("resetCredits", {}).get("availableCount")
-    if reset_credits is not None:
-        readings[f"limit/{provider.get('instanceId')}/credits"] = Reading(
-            f"{label} reset credits",
-            None if unavailable else _number(reset_credits),
-            "count",
-            attrs,
-        )
 
 
 def _build_limit_readings(
@@ -309,7 +301,10 @@ def _build_limit_readings(
     now: datetime,
     limits_failed: bool,
 ) -> None:
-    """Add quota window and credit sensors for each provider instance."""
+    """Add account status even when a failed/unsupported account has no windows."""
+    if not isinstance(providers, list):
+        raise T3ProtocolError("T3 returned an invalid provider list")
+    accounts = []
     for provider in providers:
         instance_id = provider.get("instanceId")
         limits = provider.get("usageLimits")
@@ -317,45 +312,150 @@ def _build_limit_readings(
             continue
         driver = provider.get("driver")
         label = provider.get("displayName") or PROVIDER_NAMES.get(driver, driver) or instance_id
-        unavailable = limits_failed or bool(limits.get("unavailable"))
+        reason = (limits.get("unavailable") or {}).get("reason")
+        # Never put arbitrary server error messages in states or diagnostics.
+        reason = reason if reason in ("unsupported", "probeFailed") else None
+        checked_at = _timestamp(limits.get("checkedAt"))
+        checked_expiry = checked_at + MAX_QUOTA_AGE if checked_at else None
+        stale = (
+            checked_at is None or checked_at > now + timedelta(minutes=5) or checked_expiry <= now
+        )
+        reason = "refresh_failed" if limits_failed else reason or ("stale" if stale else None)
+        unavailable = reason is not None
         attrs = {
-            "provider": provider.get("driver"),
+            "provider": driver,
             "instance_id": instance_id,
-            "checked_at": limits.get("checkedAt"),
-            "unavailable_reason": "refresh_failed"
-            if limits_failed
-            else (limits.get("unavailable") or {}).get("reason"),
+            "checked_at": checked_at.isoformat() if checked_at else None,
+            "unavailable_reason": reason,
+            "stale": stale,
         }
-        _window_readings(readings, provider, label, attrs, unavailable, now)
-        _credits_reading(readings, provider, label, attrs, unavailable)
+        expiries = [checked_expiry] if checked_expiry else []
+        for window in limits.get("windows", []):
+            expires_at = _add_window(
+                readings, instance_id, window, label, attrs, unavailable, now, checked_expiry
+            )
+            if expires_at:
+                expiries.append(expires_at)
+        reset_credits = (limits.get("resetCredits") or {}).get("availableCount")
+        if reset_credits is not None:
+            readings[f"limit/{instance_id}/credits"] = Reading(
+                f"{label} reset credits",
+                None if unavailable else _number(reset_credits),
+                "count",
+                attrs,
+                expires_at=checked_expiry,
+            )
+        expires_at = min(expiries) if expiries else None
+        if reason == "unsupported":
+            status = "unsupported"
+        elif reason in ("probeFailed", "refresh_failed"):
+            status = "failed"
+        elif stale or (expires_at is not None and expires_at <= now):
+            status = "stale"
+            reason = "stale"
+        else:
+            status = "ok"
+        accounts.append(
+            {
+                "instance_id": instance_id,
+                "provider": driver,
+                "label": label,
+                "status": status,
+                "reason": reason,
+                "checked_at": attrs["checked_at"],
+                "expires_at": expires_at.isoformat() if expires_at else None,
+            }
+        )
+    readings["limits_status"] = _limits_status(accounts, limits_failed)
+
+
+def expire_snapshot(snapshot: Snapshot, now: datetime) -> Snapshot:
+    """Invalidate expired quotas locally without resetting HA's polling/retry state."""
+    readings = dict(snapshot.readings)
+    for key, reading in readings.items():
+        if reading.expires_at is not None and reading.expires_at <= now:
+            attrs = {**reading.attributes, "stale": True}
+            attrs["unavailable_reason"] = attrs.get("unavailable_reason") or "stale"
+            readings[key] = replace(reading, value=None, attributes=attrs)
+    status = readings["limits_status"]
+    accounts = []
+    for account in status.attributes["accounts"]:
+        account = dict(account)
+        expires_at = _timestamp(account["expires_at"])
+        if account["status"] == "ok" and expires_at is not None and expires_at <= now:
+            account.update(status="stale", reason="stale")
+        accounts.append(account)
+    readings["limits_status"] = _limits_status(accounts, status.attributes["refresh_failed"])
+    return replace(snapshot, readings=readings)
+
+
+def _build_usage_readings(
+    summary: dict[str, Any] | None, today: date, time_zone: str
+) -> tuple[dict[str, Reading], dict[str, Any]]:
+    """Normalize usage separately so its failure cannot suppress good quotas."""
+    if summary is None:
+        readings = {
+            "usage_status": Reading("Usage data status", "failed", "status"),
+            "last_read": Reading("Last usage read", None, "timestamp"),
+        }
+        _build_period_readings(readings, [], today, time_zone, True, True)
+        return readings, {}
+    buckets, sources = _validate_summary(summary)
+    incomplete, no_readable_sources = _source_flags(sources)
+    pricing_status = summary.get("pricing", {}).get("status")
+    if pricing_status not in ("fresh", "cached", "unavailable"):
+        pricing_status = "unknown"
+    readings = {
+        "usage_status": Reading(
+            "Usage data status",
+            "partial" if incomplete else "ok",
+            "status",
+            {
+                "source_count": len(sources),
+                "pricing_status": pricing_status,
+            },
+        ),
+        "last_read": Reading("Last usage read", _timestamp(summary.get("readAt")), "timestamp"),
+    }
+    _build_period_readings(readings, buckets, today, time_zone, incomplete, no_readable_sources)
+    diagnostics = {
+        "contract_version": summary["contractVersion"],
+        "sources": [
+            {"status": source["status"], "refreshing": bool(source.get("refreshing"))}
+            for source in sources
+        ],
+        "pricing_status": pricing_status,
+    }
+    return readings, diagnostics
 
 
 def normalize(
     environment: dict[str, Any],
-    summary: dict[str, Any],
+    summary: dict[str, Any] | None,
     providers: list[dict[str, Any]],
     today: date,
     time_zone: str,
     now: datetime,
     *,
     limits_failed: bool = False,
+    allow_partial: bool = False,
 ) -> Snapshot:
-    """Use calendar windows in HA's zone; reasoning is already part of output."""
-    buckets, sources = _validate_summary(summary)
-    incomplete, no_readable_sources = _source_flags(sources)
-    readings: dict[str, Reading] = {}
-    readings["usage_status"] = Reading(
-        "Usage data status",
-        "partial" if incomplete else "ok",
-        "status",
-        {"source_count": len(sources), "pricing_status": summary.get("pricing", {}).get("status")},
-    )
-    readings["limits_status"] = Reading(
-        "Limits refresh status", "failed" if limits_failed else "ok", "status"
-    )
-    readings["last_read"] = Reading(
-        "Last usage read", _timestamp(summary.get("readAt")), "timestamp"
-    )
-    _build_period_readings(readings, buckets, today, time_zone, incomplete, no_readable_sources)
-    _build_limit_readings(readings, providers, now, limits_failed)
-    return Snapshot(environment, readings)
+    """Use calendar windows in HA's zone; isolate failures during runtime polling."""
+    if summary is None and not allow_partial:
+        raise T3ProtocolError("T3 returned an invalid usage response")
+    invalid = (T3ProtocolError, KeyError, TypeError, ValueError, AttributeError)
+    try:
+        readings, diagnostics = _build_usage_readings(summary, today, time_zone)
+    except invalid:
+        if not allow_partial:
+            raise
+        readings, diagnostics = _build_usage_readings(None, today, time_zone)
+    try:
+        limit_readings: dict[str, Reading] = {}
+        _build_limit_readings(limit_readings, providers, now, limits_failed)
+    except invalid:
+        if not allow_partial:
+            raise
+        limit_readings = {"limits_status": _limits_status([], True)}
+    readings.update(limit_readings)
+    return Snapshot(environment, readings, diagnostics)

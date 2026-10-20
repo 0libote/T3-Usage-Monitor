@@ -94,12 +94,17 @@ async def t3_server(aiohttp_server, descriptor, summary, providers, socket_enabl
         "rpc_denied": False,
         "refresh_failure": False,
         "summary_failure": False,
+        "descriptor_failure": False,
+        "failed_methods": set(),
+        "closed_methods": set(),
         "descriptor": descriptor,
         "summary": summary,
         "providers": providers,
     }
 
     async def environment(request):
+        if state["descriptor_failure"]:
+            raise web.HTTPServiceUnavailable()
         return web.json_response(state["descriptor"])
 
     async def token(request):
@@ -118,7 +123,9 @@ async def t3_server(aiohttp_server, descriptor, summary, providers, socket_enabl
         )
 
     async def websocket(request):
-        assert request.query["orchestrationProtocol"] == "2"
+        assert request.query["orchestrationProtocol"] == str(
+            state["descriptor"]["orchestrationProtocolVersion"]
+        )
         if (
             state["auth_failure"]
             or request.headers.get("Authorization") != f"Bearer {state['token']}"
@@ -132,6 +139,9 @@ async def t3_server(aiohttp_server, descriptor, summary, providers, socket_enabl
                 continue
             method = data["tag"]
             calls.append((method, data["payload"]))
+            if method in state["closed_methods"]:
+                await socket.close()
+                break
             if state["rpc_denied"]:
                 result = {
                     "_tag": "Failure",
@@ -145,8 +155,10 @@ async def t3_server(aiohttp_server, descriptor, summary, providers, socket_enabl
                         }
                     ],
                 }
-            elif (method == "server.refreshProviders" and state["refresh_failure"]) or (
-                method == "server.getUsageSummary" and state["summary_failure"]
+            elif (
+                method in state["failed_methods"]
+                or (method == "server.refreshProviders" and state["refresh_failure"])
+                or (method == "server.getUsageSummary" and state["summary_failure"])
             ):
                 result = {
                     "_tag": "Failure",

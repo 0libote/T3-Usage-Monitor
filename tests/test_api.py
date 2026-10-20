@@ -48,12 +48,9 @@ async def test_pair_and_metrics(t3_server):
         assert await client.pair("pair-secret") == "session-secret"
         snapshot = await fetch_snapshot(client, "Pacific/Auckland", "test-server")
     assert snapshot.readings["limit/codex/primary/remaining"].value == 75
-    assert [method for method, _ in t3_server["calls"]] == [
-        "server.getUsageSummary",
-        "server.getConfig",
-        "server.refreshProviders",
-    ]
-    assert t3_server["calls"][0][1]["timeZone"] == "Pacific/Auckland"
+    calls = dict(t3_server["calls"])
+    assert set(calls) == {"server.getUsageSummary", "server.refreshProviders"}
+    assert calls["server.getUsageSummary"]["timeZone"] == "Pacific/Auckland"
 
 
 async def test_identity_checked_before_sending_token(t3_server):

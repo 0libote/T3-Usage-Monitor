@@ -151,12 +151,26 @@ or failed, totals are unavailable. An empty successful history is zero.
 Providers with no bucket in a period get no new usage sensors for that period;
 previously created ones become unavailable.
 
+Usage and quotas use independent requests. During runtime polling, a failed or
+malformed usage response makes totals unavailable while healthy quotas continue
+updating. A quota failure leaves healthy usage totals available. Authentication
+failures still trigger Home Assistant's reauthentication flow. Initial pairing
+requires a valid usage response before the session is saved.
+
+The limits status reports `partial` when some accounts are healthy and others
+have failed or expired, `failed` when probes fail without a healthy account,
+`stale` when readings have expired, and `unsupported` when all reported accounts
+are unsupported. The dashboard names affected accounts even when they have no
+quota windows. An empty provider list reports no subscription limits.
+
 API-key and other unsupported accounts may report no quota windows. Missing
 quotas stay unavailable, rather than showing 0% or 100%. Failed probes suppress
-old readings. Percentages with a reset time in the past also stay unavailable
-until T3 reports a current window. When a provider omits its reset timestamp,
-check the `checked_at` attribute for freshness. Reset-credit counts are shown
-when reported; the integration does not redeem credits.
+old readings. Quotas expire locally at their reset timestamp or two hours after
+the provider's `checkedAt` timestamp, whichever comes first, including between
+hourly polls. Missing, invalid, or more than five minutes future-dated check
+timestamps also make readings unavailable. Reset-credit counts expire after
+two hours. Fresh provider readings restore availability; the integration does
+not redeem credits.
 
 Accounts are not pooled or deduplicated across servers, and CLIProxyAPI hub-only
 accounts are not collected. Connecting the same provider account on two servers
@@ -179,23 +193,57 @@ An incompatible contract produces an error instead of zero readings.
 ## Development and validation
 
 ```sh
-uv sync --group dev
-uv run ruff check custom_components tests scripts
-uv run ruff format --check custom_components tests scripts
-uv run pytest -q
-uv run python scripts/package.py
+bash scripts/ci.sh ha-current
+bash scripts/ci.sh ha-min
 ```
 
-Validation against Home Assistant 2026.10.2: 61 tests passing, 94% integration
-coverage, and Ruff and hassfest passing.
+The locked test environments cover HA 2026.3.1 (the HACS minimum) and
+2026.10.2. Version 0.2.1 passes 104 tests in each environment. Each command runs
+Ruff, formatting, the full test suite, and archive
+validation. The minimum environment builds HA's pinned `lru-dict` dependency
+from source on Python 3.14. Both environments skip the unused `mock-open` and
+`pyric` dependencies. Run `bash scripts/ci.sh ha-current` to restore and validate
+the default current environment after minimum-version testing. CI also runs hassfest.
 
 The tests use Home Assistant with a local HTTP/WebSocket fixture. They cover
 pairing, RPC framing, auth failures, reauthentication, duplicate prevention,
-source failures, quota freshness, token arithmetic, calendar resets, dynamic
-sensors, and unload. A live test against T3 server
+source failures, quota expiry without a poll, token arithmetic, midnight/month
+and DST boundaries, dynamic sensors, outage recovery, diagnostics downloads,
+archive installation layout, and unload. Synthetic sanitized usage fixtures
+cover the consumed common fields of contracts 4–6 over both supported protocols;
+they are not a substitute for live tests against each server version.
+
+An earlier live test against T3 server
 `0.1.1-nightly.20261016.3190` (protocol 2) returned 67 normalized sensors. The
-temporary credential was revoked afterward. Deployment on a real HAOS device
-has not been tested yet.
+temporary credential was revoked afterward. This does not validate the 0.2.1
+changes against a live T3 server. Deployment on a real HAOS device remains
+unverified; follow the [HAOS installation and upgrade check](haos-smoke-test.md)
+before publishing.
+
+## Troubleshooting diagnostics
+
+In Settings > Devices & services, open the integration's menu and choose
+Download diagnostics. The integration's diagnostic data includes server and
+protocol versions, usage contract/source status, pricing status, quota failure
+reasons, and check/expiry timestamps. Accounts are numbered. It omits tokens,
+server addresses, server/account names, environment/account IDs, raw error
+messages, and filesystem paths. Home Assistant adds its standard system
+information to the downloaded file.
+
+## Release process
+
+1. Update the version in `pyproject.toml` and `manifest.json`, add a changelog
+   entry, and run `uv lock`. If the minimum HA version changes, update both
+   `hacs.json` and the `ha-min` dependency group.
+2. Run both CI environments and the HAOS smoke test. Review the changes.
+3. Create and push a matching `v`-prefixed tag, for example `v0.2.1`.
+4. The tag workflow runs both environments and hassfest, verifies the version
+   and tag, builds `dist/t3_code.zip`, and creates a draft GitHub release with
+   that asset. Review the draft and installation results before publishing it.
+
+`python scripts/package.py --tag v0.2.1` can validate and package locally without
+creating a release. The archive places `t3_code/` at its root for extraction
+into Home Assistant's `custom_components/` directory.
 
 Protocol references: [T3 usage contract](https://github.com/pingdotgg/t3code/blob/main/packages/contracts/src/usage.ts),
 [T3 auth contract](https://github.com/pingdotgg/t3code/blob/main/packages/contracts/src/auth.ts),

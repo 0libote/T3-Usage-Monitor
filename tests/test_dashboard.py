@@ -29,7 +29,7 @@ async def test_dashboard_lifecycle_and_templates(hass, t3_server):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     path = f"t3-code-{entry.entry_id}"
-    assert frontend.async_panel_exists(hass, path)
+    assert path in hass.data[frontend.DATA_PANELS]
     dashboard = hass.data[LOVELACE_DATA].dashboards[path]
     config = await dashboard.async_load(False)
     assert config["title"] == NAME
@@ -45,7 +45,7 @@ async def test_dashboard_lifecycle_and_templates(hass, t3_server):
     assert "5 hour: resets in" in rendered[-1]
     assert "Unavailable" not in rendered[-1]
     assert await hass.config_entries.async_unload(entry.entry_id)
-    assert not frontend.async_panel_exists(hass, path)
+    assert path not in hass.data[frontend.DATA_PANELS]
     assert path not in hass.data[LOVELACE_DATA].dashboards
 
 
@@ -134,7 +134,7 @@ async def test_dashboard_can_be_turned_off(hass, t3_server):
     hass.config_entries.async_update_entry(entry, options={CONF_SHOW_DASHBOARD: False})
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert not frontend.async_panel_exists(hass, f"t3-code-{entry.entry_id}")
+    assert f"t3-code-{entry.entry_id}" not in hass.data.get(frontend.DATA_PANELS, {})
 
 
 async def test_partial_and_failed_data_visible(hass, t3_server):
@@ -153,3 +153,21 @@ async def test_partial_and_failed_data_visible(hass, t3_server):
     assert "Some records have no price" in rendered[2]
     assert "Quota refresh failed" in rendered[2]
     assert "Unavailable" in rendered[-1]
+
+
+@pytest.mark.parametrize(
+    ("reason", "message"),
+    [("probeFailed", "quota probe failed"), ("unsupported", "limits are unsupported")],
+)
+async def test_account_failure_explanation_without_gauges(hass, t3_server, reason, message):
+    limits = t3_server["providers"][0]["usageLimits"]
+    limits["windows"] = []
+    limits["unavailable"] = {"reason": reason}
+    entry = create_entry(hass, t3_server)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    config = build_dashboard(hass, entry)
+    warning = list(markdown_cards(config))[2]
+    rendered = template.Template(warning["content"], hass).async_render(parse_result=False)
+    assert "Codex" in rendered
+    assert message in rendered

@@ -8,7 +8,7 @@ totals, provider breakdowns, quota reset times, and cache savings.
 
 ## Install
 
-You need Home Assistant 2026.3 or newer, [HACS](https://hacs.xyz/), and an existing
+You need Home Assistant 2026.3.1 or newer, [HACS](https://hacs.xyz/), and an existing
 T3 Code server that Home Assistant can reach. This works on HAOS, Container, and
 other supported Home Assistant installations.
 
@@ -53,7 +53,8 @@ Home Assistant's time zone; quotas follow each provider's own windows.
 You can also turn the sidebar dashboard off in Options.
 
 Costs are API-equivalent estimates, not subscription bills. Missing or stale
-quotas show as unavailable. See [data and limits](docs/reference.md#data-and-limits)
+quotas show as unavailable, including at reset time between polls. The dashboard
+explains failed, expired, and unsupported accounts. See [data and limits](docs/reference.md#data-and-limits)
 for details about incomplete history and unsupported accounts.
 
 ## Change or remove a connection
@@ -65,4 +66,7 @@ Add another T3 Usage Monitor integration to connect a different server.
 To remove access, delete the integration and revoke its session in T3's access
 settings. Deleting the integration alone leaves that session active.
 
-[Developer setup and validation](docs/reference.md#development-and-validation)
+For connection problems, [download diagnostics](docs/reference.md#troubleshooting-diagnostics)
+from the integration's menu.
+
+[Developer setup and validation](docs/reference.md#development-and-validation) · [Changelog](CHANGELOG.md)

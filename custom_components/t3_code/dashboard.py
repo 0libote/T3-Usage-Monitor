@@ -8,7 +8,7 @@ from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.components.lovelace.dashboard import LovelaceConfig
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.json import cached_json_fragment
+from homeassistant.helpers.json import json_bytes, json_fragment
 
 from .const import CONF_SHOW_DASHBOARD, DOMAIN, NAME
 
@@ -75,10 +75,20 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
             "type": "markdown",
             "content": "{% if states('" + status + "') == 'partial' %}"
             "Some usage history is missing. Totals may be incomplete.\n\n{% endif %}"
+            "{% if states('" + status + "') == 'failed' %}"
+            "Usage refresh failed. Totals are unavailable.\n\n{% endif %}"
             "{% if (state_attr('" + cost + "', 'unpriced_records') or 0) > 0 %}"
             "Some records have no price. Cost estimates are incomplete.\n\n{% endif %}"
             "{% if states('" + limits_status + "') == 'failed' %}"
             "Quota refresh failed. Previous limits are unavailable.\n\n{% endif %}"
+            "{% for account in state_attr('" + limits_status + "', 'accounts') or [] %}"
+            "{% if account.status == 'failed' %}"
+            "{{ account.label }}: quota probe failed.\n\n"
+            "{% elif account.status == 'stale' %}"
+            "{{ account.label }}: quota reading expired.\n\n"
+            "{% elif account.status == 'unsupported' %}"
+            "{{ account.label }}: subscription limits are unsupported for this account.\n\n"
+            "{% endif %}{% endfor %}"
             "{% if states('" + status + "') in ['unknown', 'unavailable'] %}"
             "Waiting for current usage readings.\n\n{% endif %}"
             "Readings refresh every five minutes by default.",
@@ -195,7 +205,7 @@ class T3Dashboard(LovelaceConfig):
         return build_dashboard(self.hass, self.entry)
 
     async def async_json(self, force):
-        return cached_json_fragment(await self.async_load(force))
+        return json_fragment(json_bytes(await self.async_load(force)))
 
     async def async_get_info(self):
         return {"mode": self.mode, "views": 1}
@@ -211,7 +221,7 @@ def async_register_dashboard(hass: HomeAssistant, entry) -> None:
         LOGGER.warning("T3 dashboard is unavailable because Lovelace is not loaded")
         return
     path = f"t3-code-{entry.entry_id}"
-    if path in data.dashboards or frontend.async_panel_exists(hass, path):
+    if path in data.dashboards or path in hass.data.get(frontend.DATA_PANELS, {}):
         LOGGER.warning("T3 dashboard URL is already in use: %s", path)
         return
     dashboard = T3Dashboard(hass, path, entry)

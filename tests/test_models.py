@@ -72,3 +72,28 @@ def test_malformed_tokens(descriptor, summary, now, value):
     today = now.date()
     with pytest.raises(T3ProtocolError):
         normalize(descriptor, summary, [], today, "UTC", now)
+
+
+@pytest.mark.parametrize(
+    ("reason", "status"), [("unsupported", "unsupported"), ("probeFailed", "failed")]
+)
+def test_account_status_without_windows(descriptor, summary, providers, now, reason, status):
+    limits = providers[0]["usageLimits"]
+    limits["windows"] = []
+    limits["unavailable"] = {"reason": reason, "message": "private-server-error"}
+    reading = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings[
+        "limits_status"
+    ]
+    assert reading.value == status
+    assert reading.attributes["accounts"][0]["reason"] == reason
+    assert "private-server-error" not in str(reading)
+
+
+def test_one_failed_account_keeps_healthy_account(descriptor, summary, providers, now):
+    failed = deepcopy(providers[0])
+    failed["instanceId"] = "second-account"
+    failed["usageLimits"]["unavailable"] = {"reason": "probeFailed"}
+    readings = normalize(descriptor, summary, [*providers, failed], now.date(), "UTC", now).readings
+    assert readings["limits_status"].value == "partial"
+    assert readings["limit/codex/primary/remaining"].value == 75
+    assert readings["limit/second-account/primary/remaining"].value is None
