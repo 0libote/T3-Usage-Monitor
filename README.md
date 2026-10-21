@@ -4,7 +4,7 @@ A Home Assistant integration that monitors token usage, estimated USD cost, and
 subscription limits from an existing T3 Code server. See daily and monthly
 totals, provider breakdowns, quota reset times, and cache savings.
 
-[![Install T3 Usage Monitor through HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=0libote&repository=T3-x-HA&category=integration)
+[![Install T3 Usage Monitor through HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=0libote&repository=T3-Usage-Monitor&category=integration)
 
 ## Install
 

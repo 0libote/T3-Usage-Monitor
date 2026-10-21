@@ -4,10 +4,10 @@
   "codeowners": ["@0libote"],
   "config_flow": true,
   "dependencies": ["lovelace"],
-  "documentation": "https://github.com/0libote/T3-x-HA",
+  "documentation": "https://github.com/0libote/T3-Usage-Monitor",
   "integration_type": "service",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/0libote/T3-x-HA/issues",
+  "issue_tracker": "https://github.com/0libote/T3-Usage-Monitor/issues",
   "requirements": [],
   "version": "0.2.1"
 }

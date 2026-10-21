@@ -11,7 +11,7 @@ Check that `/config/custom_components/t3_code/manifest.json` exists, restart Hom
 Assistant, then add T3 Usage Monitor in Settings > Devices & services.
 
 To add the repository manually in HACS, open HACS > Custom repositories, enter
-`https://github.com/0libote/T3-x-HA`, select Integration, and download T3 Usage Monitor.
+`https://github.com/0libote/T3-Usage-Monitor`, select Integration, and download T3 Usage Monitor.
 Restart Home Assistant, then add the integration. This is a HACS custom
 repository; it is not listed in the default HACS catalog or the HAOS app/add-on
 store.
