@@ -31,6 +31,16 @@ def test_today_month_and_provider_split(descriptor, summary, now):
     assert readings["usage/claude/month/tokens"].value == 370
 
 
+def test_today_keeps_zero_for_provider_without_usage_today(descriptor, summary, now):
+    earlier = deepcopy(summary["buckets"][0])
+    earlier.update(day="2026-10-01", provider="claude")
+    summary["buckets"].append(earlier)
+    readings = normalize(descriptor, summary, [], date(2026, 10, 19), "UTC", now).readings
+    assert readings["usage/claude/today/tokens"].value == 0
+    assert readings["usage/claude/today/cost"].value == 0
+    assert readings["usage/claude/month/tokens"].value == 370
+
+
 def test_no_history_is_zero_but_failed_sources_unavailable(descriptor, summary, now):
     summary["buckets"] = []
     readings = normalize(descriptor, summary, [], now.date(), "UTC", now).readings

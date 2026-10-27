@@ -173,10 +173,11 @@ def _build_period_readings(
     no_readable_sources: bool,
 ) -> None:
     """Add today/month usage sensors for every provider present."""
+    known_providers = sorted({b["provider"] for b in buckets})
     for period, start in (("today", today), ("month", today.replace(day=1))):
         selected = [b for b in buckets if start.isoformat() <= b["day"] <= today.isoformat()]
         reset = datetime.combine(start, time.min, ZoneInfo(time_zone))
-        for provider in [None, *sorted({b["provider"] for b in selected})]:
+        for provider in [None, *known_providers]:
             _build_provider_readings(
                 readings,
                 selected,
