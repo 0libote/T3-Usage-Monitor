@@ -2,6 +2,8 @@
 
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
+from typing import Any
 
 from homeassistant.components import frontend
 from homeassistant.components.lovelace.const import LOVELACE_DATA
@@ -158,7 +160,7 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
         }
     ]
     for card in cards[2:]:
-        group_cards = card["cards"] if card["type"] == "vertical-stack" else [card]
+        group_cards: Sequence[Any] = card["cards"] if card["type"] == "vertical-stack" else [card]
         sections.append(
             {
                 "type": "grid",
