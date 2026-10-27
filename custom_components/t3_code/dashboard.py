@@ -160,9 +160,7 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
         }
     ]
     for card in cards[2:]:
-        group_cards: Sequence[Any] = (
-            card["cards"] if card["type"] == "vertical-stack" else [card]
-        )
+        group_cards: Sequence[Any] = card["cards"] if card["type"] == "vertical-stack" else [card]
         sections.append(
             {
                 "type": "grid",
