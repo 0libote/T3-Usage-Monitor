@@ -105,12 +105,14 @@ the entity IDs with those in your Home Assistant instance.
 type: entities
 title: T3 Usage Monitor
 entities:
-  - entity: sensor.development_today_tokens
-  - entity: sensor.development_today_estimated_cost
-  - entity: sensor.development_month_estimated_cost
+  - entity: sensor.development_tokens_today
+  - entity: sensor.development_estimated_cost_today
+  - entity: sensor.development_estimated_cost_this_month
   - entity: sensor.development_codex_5_hour_remaining
   - entity: sensor.development_codex_5_hour_reset
 ```
+
+Enable the optional reset-timestamp sensor before using it in this card.
 
 A low-quota notification can use a numeric-state trigger:
 
@@ -148,14 +150,19 @@ Diagnostic sensors report usage completeness, limit-refresh status, and the
 last read time. A partial or refreshing source sets the usage status to
 `partial` and adds `incomplete: true` to usage sensors. If every source is missing
 or failed, totals are unavailable. An empty successful history is zero.
-Providers with no bucket in a period get no new usage sensors for that period;
+Providers with history this month get zero-valued daily sensors on days with no
+usage. Providers absent from the whole response get no new usage sensors;
 previously created ones become unavailable.
 
 Usage and quotas use independent requests. During runtime polling, a failed or
 malformed usage response makes totals unavailable while healthy quotas continue
-updating. A quota failure leaves healthy usage totals available. Authentication
-failures still trigger Home Assistant's reauthentication flow. Initial pairing
-requires a valid usage response before the session is saved.
+updating. A malformed quota account leaves other healthy accounts available and
+appears as a failed account with an invalid-response explanation. A quota failure
+leaves healthy usage totals available. Authentication failures still trigger
+Home Assistant's reauthentication flow. Initial pairing
+requires a valid usage response before the session is saved. If a metrics probe
+fails after pairing, retrying reuses the session only for the same server
+identity; a changed identity at the same address aborts setup before sending it.
 
 The limits status reports `partial` when some accounts are healthy and others
 have failed or expired, `failed` when probes fail without a healthy account,
@@ -165,8 +172,9 @@ quota windows. An empty provider list reports no subscription limits.
 
 API-key and other unsupported accounts may report no quota windows. Missing
 quotas stay unavailable, rather than showing 0% or 100%. Failed probes suppress
-old readings. Quotas expire locally at their reset timestamp or two hours after
-the provider's `checkedAt` timestamp, whichever comes first, including between
+old readings, including when T3 reports an unavailability reason this version
+does not recognize. Quotas expire locally at their reset timestamp or two hours
+after the provider's `checkedAt` timestamp, whichever comes first, including between
 hourly polls. Missing, invalid, or more than five minutes future-dated check
 timestamps also make readings unavailable. Reset-credit counts expire after
 two hours. Fresh provider readings restore availability; the integration does
@@ -198,8 +206,7 @@ bash scripts/ci.sh ha-min
 ```
 
 The locked test environments cover HA 2026.3.1 (the HACS minimum) and
-2026.10.2. Version 0.2.1 passes 104 tests in each environment. Each command runs
-Ruff, formatting, the full test suite, and archive
+2026.10.2. Each command runs Ruff, formatting, the full test suite, and archive
 validation. The minimum environment builds HA's pinned `lru-dict` dependency
 from source on Python 3.14. Both environments skip the unused `mock-open` and
 `pyric` dependencies. Run `bash scripts/ci.sh ha-current` to restore and validate

@@ -113,6 +113,24 @@ async def test_probe_retry_does_not_reuse_single_use_token(hass, t3_server):
     assert t3_server["pair_count"] == 1
 
 
+async def test_probe_retry_rejects_changed_server_before_reusing_session(hass, t3_server):
+    t3_server["summary_failure"] = True
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}, data=credentials(t3_server)
+    )
+    assert result["errors"] == {"base": "cannot_connect"}
+    calls = len(t3_server["calls"])
+    t3_server["descriptor"]["environmentId"] = "different-server"
+    t3_server["summary_failure"] = False
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], credentials(t3_server)
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "wrong_server"
+    assert len(t3_server["calls"]) == calls
+    assert t3_server["pair_count"] == 1
+
+
 @pytest.mark.parametrize(
     ("data", "error"),
     [

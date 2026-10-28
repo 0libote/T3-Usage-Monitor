@@ -288,12 +288,90 @@ def _limits_status(accounts: list[dict[str, Any]], refresh_failed: bool) -> Read
         status = "unsupported"
     else:
         status = "ok"
+    # Accounts without quota metrics still need a local status expiry timer.
+    deadlines = [
+        stamp
+        for account in accounts
+        if account["status"] == "ok" and (stamp := _timestamp(account["expires_at"])) is not None
+    ]
     return Reading(
         "Limits refresh status",
         status,
         "status",
         {"accounts": accounts, "refresh_failed": refresh_failed},
+        expires_at=min(deadlines) if deadlines else None,
     )
+
+
+def _build_account_readings(
+    readings: dict[str, Reading],
+    provider: dict[str, Any],
+    now: datetime,
+    limits_failed: bool,
+) -> dict[str, Any] | None:
+    """Normalize one account without publishing partially validated metrics."""
+    instance_id = provider.get("instanceId")
+    limits = provider.get("usageLimits")
+    if limits is None:
+        return None
+    if not isinstance(instance_id, str) or not instance_id or not isinstance(limits, dict):
+        raise T3ProtocolError("T3 returned an invalid quota account")
+    driver = provider.get("driver")
+    label = provider.get("displayName") or PROVIDER_NAMES.get(driver, driver) or instance_id
+    reason = (limits.get("unavailable") or {}).get("reason")
+    # Never put arbitrary server error messages in states or diagnostics.
+    if reason not in ("unsupported", "probeFailed"):
+        reason = "probeFailed" if limits.get("unavailable") is not None else None
+    checked_at = _timestamp(limits.get("checkedAt"))
+    checked_expiry = checked_at + MAX_QUOTA_AGE if checked_at else None
+    stale = checked_at is None or checked_at > now + timedelta(minutes=5) or checked_expiry <= now
+    reason = "refresh_failed" if limits_failed else reason or ("stale" if stale else None)
+    unavailable = reason is not None
+    attrs = {
+        "provider": driver,
+        "instance_id": instance_id,
+        "checked_at": checked_at.isoformat() if checked_at else None,
+        "unavailable_reason": reason,
+        "stale": stale,
+    }
+    expiries = [checked_expiry] if checked_expiry else []
+    windows = limits.get("windows", [])
+    if not isinstance(windows, list):
+        raise T3ProtocolError("T3 returned invalid quota windows")
+    for window in windows:
+        expires_at = _add_window(
+            readings, instance_id, window, label, attrs, unavailable, now, checked_expiry
+        )
+        if expires_at:
+            expiries.append(expires_at)
+    reset_credits = (limits.get("resetCredits") or {}).get("availableCount")
+    if reset_credits is not None:
+        readings[f"limit/{instance_id}/credits"] = Reading(
+            f"{label} reset credits",
+            None if unavailable else _number(reset_credits),
+            "count",
+            attrs,
+            expires_at=checked_expiry,
+        )
+    expires_at = min(expiries) if expiries else None
+    if reason == "unsupported":
+        status = "unsupported"
+    elif reason in ("probeFailed", "refresh_failed"):
+        status = "failed"
+    elif stale or (expires_at is not None and expires_at <= now):
+        status = "stale"
+        reason = "stale"
+    else:
+        status = "ok"
+    return {
+        "instance_id": instance_id,
+        "provider": driver,
+        "label": label,
+        "status": status,
+        "reason": reason,
+        "checked_at": attrs["checked_at"],
+        "expires_at": expires_at.isoformat() if expires_at else None,
+    }
 
 
 def _build_limit_readings(
@@ -301,72 +379,40 @@ def _build_limit_readings(
     providers: list[dict[str, Any]],
     now: datetime,
     limits_failed: bool,
+    allow_partial: bool,
 ) -> None:
-    """Add account status even when a failed/unsupported account has no windows."""
+    """Keep healthy accounts available when another account is malformed."""
     if not isinstance(providers, list):
         raise T3ProtocolError("T3 returned an invalid provider list")
     accounts = []
     for provider in providers:
-        instance_id = provider.get("instanceId")
-        limits = provider.get("usageLimits")
-        if not isinstance(instance_id, str) or not isinstance(limits, dict):
-            continue
-        driver = provider.get("driver")
-        label = provider.get("displayName") or PROVIDER_NAMES.get(driver, driver) or instance_id
-        reason = (limits.get("unavailable") or {}).get("reason")
-        # Never put arbitrary server error messages in states or diagnostics.
-        reason = reason if reason in ("unsupported", "probeFailed") else None
-        checked_at = _timestamp(limits.get("checkedAt"))
-        checked_expiry = checked_at + MAX_QUOTA_AGE if checked_at else None
-        stale = (
-            checked_at is None or checked_at > now + timedelta(minutes=5) or checked_expiry <= now
-        )
-        reason = "refresh_failed" if limits_failed else reason or ("stale" if stale else None)
-        unavailable = reason is not None
-        attrs = {
-            "provider": driver,
-            "instance_id": instance_id,
-            "checked_at": checked_at.isoformat() if checked_at else None,
-            "unavailable_reason": reason,
-            "stale": stale,
-        }
-        expiries = [checked_expiry] if checked_expiry else []
-        for window in limits.get("windows", []):
-            expires_at = _add_window(
-                readings, instance_id, window, label, attrs, unavailable, now, checked_expiry
-            )
-            if expires_at:
-                expiries.append(expires_at)
-        reset_credits = (limits.get("resetCredits") or {}).get("availableCount")
-        if reset_credits is not None:
-            readings[f"limit/{instance_id}/credits"] = Reading(
-                f"{label} reset credits",
-                None if unavailable else _number(reset_credits),
-                "count",
-                attrs,
-                expires_at=checked_expiry,
-            )
-        expires_at = min(expiries) if expiries else None
-        if reason == "unsupported":
-            status = "unsupported"
-        elif reason in ("probeFailed", "refresh_failed"):
-            status = "failed"
-        elif stale or (expires_at is not None and expires_at <= now):
-            status = "stale"
-            reason = "stale"
-        else:
-            status = "ok"
-        accounts.append(
-            {
-                "instance_id": instance_id,
-                "provider": driver,
-                "label": label,
-                "status": status,
-                "reason": reason,
-                "checked_at": attrs["checked_at"],
-                "expires_at": expires_at.isoformat() if expires_at else None,
+        account_readings: dict[str, Reading] = {}
+        try:
+            account = _build_account_readings(account_readings, provider, now, limits_failed)
+        except T3ProtocolError, KeyError, TypeError, ValueError, AttributeError:
+            if not allow_partial:
+                raise
+            account_readings.clear()
+            account = {
+                "instance_id": None,
+                "provider": None,
+                "label": f"Account {len(accounts) + 1}",
+                "status": "failed",
+                "reason": "invalid_response",
+                "checked_at": None,
+                "expires_at": None,
             }
-        )
+            if isinstance(provider, dict):
+                for source, target in (
+                    ("instanceId", "instance_id"),
+                    ("driver", "provider"),
+                    ("displayName", "label"),
+                ):
+                    if isinstance(value := provider.get(source), str):
+                        account[target] = value
+        if account is not None:
+            accounts.append(account)
+            readings.update(account_readings)
     readings["limits_status"] = _limits_status(accounts, limits_failed)
 
 
@@ -453,7 +499,7 @@ def normalize(
         readings, diagnostics = _build_usage_readings(None, today, time_zone)
     try:
         limit_readings: dict[str, Reading] = {}
-        _build_limit_readings(limit_readings, providers, now, limits_failed)
+        _build_limit_readings(limit_readings, providers, now, limits_failed, allow_partial)
     except invalid:
         if not allow_partial:
             raise

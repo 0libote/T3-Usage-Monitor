@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Expire quota account statuses between polls even when an account reports no
+  quota windows or reset credits.
+- Keep healthy quota accounts available when another account returns malformed
+  data, and explain invalid quota responses on the dashboard.
+- Suppress cached quotas when the server reports an unfamiliar unavailability
+  reason, and reject malformed account/window containers.
+- Abort setup retries when the server identity changes before reusing a paired
+  session.
+- Correct example sensor IDs and document zero daily usage for providers with
+  monthly history.
+
 ## 0.2.1
 
 - Fix dashboard imports on March Home Assistant releases. The tested minimum is

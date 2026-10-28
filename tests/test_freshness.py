@@ -1,5 +1,6 @@
 """Quota expiry must update HA states between network polls and stop on unload."""
 
+from copy import deepcopy
 from datetime import timedelta
 
 import pytest
@@ -86,3 +87,41 @@ async def test_expiry_does_not_clear_connection_failure(hass, t3_server, freezer
     freezer.move_to(now + timedelta(minutes=2))
     await hass.async_block_till_done()
     assert not entry.runtime_data.last_update_success
+
+
+async def test_accounts_without_metrics_expire_between_polls(hass, t3_server, freezer, now):
+    first = t3_server["providers"][0]
+    first["usageLimits"] = {
+        "checkedAt": (now - MAX_QUOTA_AGE + timedelta(minutes=1)).isoformat(),
+        "windows": [],
+    }
+    second = deepcopy(first)
+    second["instanceId"] = "second"
+    second["usageLimits"]["checkedAt"] = (now - MAX_QUOTA_AGE + timedelta(minutes=3)).isoformat()
+    t3_server["providers"].append(second)
+    entry = create_entry(hass, t3_server)
+    hass.config_entries.async_update_entry(entry, options={CONF_SCAN_INTERVAL: 3600})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    calls = len(t3_server["calls"])
+    poll_cancel = coordinator._unsub_refresh
+    assert coordinator.data.readings["limits_status"].value == "ok"
+
+    for minutes, expected, account_statuses in (
+        (2, "partial", ["stale", "ok"]),
+        (4, "stale", ["stale", "stale"]),
+    ):
+        stamp = now + timedelta(minutes=minutes)
+        freezer.move_to(stamp)
+        async_fire_time_changed(hass, stamp)
+        await hass.async_block_till_done()
+        status = coordinator.data.readings["limits_status"]
+        assert status.value == expected
+        assert [account["status"] for account in status.attributes["accounts"]] == account_statuses
+        assert len(t3_server["calls"]) == calls
+        assert coordinator.last_update_success
+        assert coordinator._unsub_refresh is poll_cancel
+
+    assert coordinator._cancel_expiry is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
