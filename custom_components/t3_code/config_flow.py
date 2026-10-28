@@ -34,7 +34,7 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
-        self._pending_auth: tuple[str, str, str, str] | None = None
+        self._pending_auth: tuple[str, str, str, str, str] | None = None
 
     def _schema(self) -> vol.Schema:
         default_url = ""
@@ -70,14 +70,14 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return None
 
     async def _ensure_token(
-        self, client: T3Client, url: str, credential: str, credential_type: str
+        self, client: T3Client, url: str, credential: str, credential_type: str, identity: str
     ) -> None:
         """Exchange a pairing token once; reuse the bearer within this flow."""
         # A successful exchange consumes a pairing token. If probing metrics
         # fails, retain the bearer in this flow so a retry doesn't consume it again.
-        cache_key = (url, credential, credential_type)
-        if self._pending_auth and self._pending_auth[:3] == cache_key:
-            client.token = self._pending_auth[3]
+        cache_key = (url, credential, credential_type, identity)
+        if self._pending_auth and self._pending_auth[:4] == cache_key:
+            client.token = self._pending_auth[4]
         elif credential_type == "pairing":
             await client.pair(credential)
             self._pending_auth = (*cache_key, client.token)
@@ -104,9 +104,21 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             client = T3Client(async_get_clientsession(self.hass), url)
             descriptor = await client.descriptor()
+            if (
+                self._pending_auth
+                and self._pending_auth[0] == url
+                and self._pending_auth[3] != descriptor["environmentId"]
+            ):
+                return self.async_abort(reason="wrong_server")
             if abort := await self._check_identity(descriptor["environmentId"]):
                 return abort
-            await self._ensure_token(client, url, credential, user_input[CONF_CREDENTIAL_TYPE])
+            await self._ensure_token(
+                client,
+                url,
+                credential,
+                user_input[CONF_CREDENTIAL_TYPE],
+                descriptor["environmentId"],
+            )
             await fetch_snapshot(client, self.hass.config.time_zone, descriptor["environmentId"])
             data = {CONF_URL: url, CONF_TOKEN: client.token}
             return self._finish(data, descriptor.get("label", "T3 Code"))

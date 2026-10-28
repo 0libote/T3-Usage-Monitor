@@ -51,12 +51,13 @@ def test_no_history_is_zero_but_failed_sources_unavailable(descriptor, summary, 
     assert readings["usage_status"].value == "partial"
 
 
-@pytest.mark.parametrize("reason", ["unsupported", "probeFailed"])
+@pytest.mark.parametrize("reason", ["unsupported", "probeFailed", "private-unknown-reason"])
 def test_unavailable_quota_never_becomes_zero(descriptor, summary, providers, now, reason):
     providers[0]["usageLimits"]["unavailable"] = {"reason": reason}
     readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
     assert readings["limit/codex/primary/used"].value is None
     assert readings["limit/codex/primary/remaining"].value is None
+    assert "private-unknown-reason" not in str(readings)
 
 
 def test_expired_quota_stale(descriptor, summary, providers, now):
@@ -107,3 +108,9 @@ def test_one_failed_account_keeps_healthy_account(descriptor, summary, providers
     assert readings["limits_status"].value == "partial"
     assert readings["limit/codex/primary/remaining"].value == 75
     assert readings["limit/second-account/primary/remaining"].value is None
+
+
+def test_malformed_account_still_rejected_during_pairing(descriptor, summary, providers, now):
+    providers[0]["usageLimits"]["resetCredits"]["availableCount"] = -1
+    with pytest.raises(T3ProtocolError):
+        normalize(descriptor, summary, providers, now.date(), "UTC", now)

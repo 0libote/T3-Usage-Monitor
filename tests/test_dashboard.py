@@ -171,3 +171,13 @@ async def test_account_failure_explanation_without_gauges(hass, t3_server, reaso
     rendered = template.Template(warning["content"], hass).async_render(parse_result=False)
     assert "Codex" in rendered
     assert message in rendered
+
+
+async def test_malformed_account_has_an_explanation(hass, t3_server):
+    t3_server["providers"][0]["usageLimits"]["windows"][0]["usedPercent"] = 101
+    entry = create_entry(hass, t3_server)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    warning = list(markdown_cards(build_dashboard(hass, entry)))[2]
+    rendered = template.Template(warning["content"], hass).async_render(parse_result=False)
+    assert "Codex: quota response was invalid." in rendered

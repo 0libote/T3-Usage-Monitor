@@ -1,6 +1,7 @@
 """Independent data failures, network recovery, and supported protocol contracts."""
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -100,3 +101,44 @@ async def test_server_outage_and_recovery(hass, t3_server):
     await entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
     assert hass.states.get(entity_id).state == "370"
+
+
+@pytest.mark.parametrize(
+    "failure", ["percentage", "windows", "windows_object", "credits", "provider", "limits"]
+)
+async def test_malformed_account_keeps_other_accounts_and_recovers(hass, t3_server, failure):
+    broken = deepcopy(t3_server["providers"][0])
+    broken["instanceId"] = "second-account"
+    t3_server["providers"].append(broken)
+    entry = create_entry(hass, t3_server)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    healthy = deepcopy(broken)
+    if failure == "percentage":
+        broken["usageLimits"]["windows"][0]["usedPercent"] = 101
+    elif failure == "windows":
+        broken["usageLimits"]["windows"] = None
+    elif failure == "windows_object":
+        broken["usageLimits"]["windows"] = {}
+    elif failure == "credits":
+        broken["usageLimits"]["resetCredits"]["availableCount"] = -1
+    elif failure == "provider":
+        t3_server["providers"][1] = None
+    else:
+        broken["usageLimits"] = "invalid"
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    readings = entry.runtime_data.data.readings
+    assert readings["usage/all/month/tokens"].value == 370
+    assert readings["limit/codex/primary/remaining"].value == 75
+    assert readings.get("limit/second-account/primary/remaining") is None
+    assert readings["limits_status"].value == "partial"
+    assert [a["status"] for a in readings["limits_status"].attributes["accounts"]] == [
+        "ok",
+        "failed",
+    ]
+    t3_server["providers"][1] = healthy
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert entry.runtime_data.data.readings["limits_status"].value == "ok"
+    assert entry.runtime_data.data.readings["limit/second-account/primary/remaining"].value == 75
