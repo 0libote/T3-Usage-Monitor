@@ -317,14 +317,18 @@ def _build_account_readings(
     if not isinstance(instance_id, str) or not instance_id or not isinstance(limits, dict):
         raise T3ProtocolError("T3 returned an invalid quota account")
     driver = provider.get("driver")
-    label = provider.get("displayName") or PROVIDER_NAMES.get(driver, driver) or instance_id
+    label = provider.get("displayName") or PROVIDER_NAMES.get(driver or "", driver) or instance_id
     reason = (limits.get("unavailable") or {}).get("reason")
     # Never put arbitrary server error messages in states or diagnostics.
     if reason not in ("unsupported", "probeFailed"):
         reason = "probeFailed" if limits.get("unavailable") is not None else None
     checked_at = _timestamp(limits.get("checkedAt"))
     checked_expiry = checked_at + MAX_QUOTA_AGE if checked_at else None
-    stale = checked_at is None or checked_at > now + timedelta(minutes=5) or checked_expiry <= now
+    stale = (
+        checked_at is None
+        or checked_at > now + timedelta(minutes=5)
+        or checked_at <= now - MAX_QUOTA_AGE
+    )
     reason = "refresh_failed" if limits_failed else reason or ("stale" if stale else None)
     unavailable = reason is not None
     attrs = {
@@ -384,7 +388,7 @@ def _build_limit_readings(
     """Keep healthy accounts available when another account is malformed."""
     if not isinstance(providers, list):
         raise T3ProtocolError("T3 returned an invalid provider list")
-    accounts = []
+    accounts: list[dict[str, Any]] = []
     for provider in providers:
         account_readings: dict[str, Reading] = {}
         try:
