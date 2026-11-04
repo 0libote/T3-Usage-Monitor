@@ -16,7 +16,7 @@ PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: T3ConfigEntry, async_add_entities: AddEntitiesCallback
+    _hass: HomeAssistant, entry: T3ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Add new provider/window entities when they appear after setup."""
     coordinator = entry.runtime_data

@@ -98,7 +98,8 @@ async def test_provider_fetch_has_shared_timeout(monkeypatch, descriptor):
     @asynccontextmanager
     async def hanging_rpc(url):
         class Hang:
-            async def call(self, method, payload):
+            @staticmethod
+            async def call(method, payload):
                 await asyncio.sleep(3600)
 
         yield Hang()
