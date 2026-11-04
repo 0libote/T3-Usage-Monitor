@@ -53,6 +53,13 @@ def _number(value: Any) -> float | int:
     return value
 
 
+def _label(value: Any, fallback: str) -> str:
+    """Collapse whitespace so server names cannot inject markdown blocks."""
+    if not isinstance(value, str) or not value.strip():
+        return fallback
+    return " ".join(value.split())
+
+
 def _timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -78,7 +85,9 @@ def _validate_summary(summary: dict[str, Any]) -> tuple[list, list]:
         for bucket in buckets:
             _validate_bucket(bucket)
         for source in sources:
-            if source["status"] not in ("ok", "missing", "partial", "failed"):
+            # Unknown status words degrade to partial, like unknown quota
+            # reasons degrade to failed probes; only a missing word is malformed.
+            if not isinstance(source, dict) or not isinstance(source.get("status"), str):
                 raise ValueError
     except (KeyError, ValueError, TypeError) as err:
         raise T3ProtocolError("T3 returned malformed usage buckets or sources") from err
@@ -254,7 +263,7 @@ def _add_window(
         "stale": stale,
         "unavailable_reason": attrs["unavailable_reason"] or ("stale" if stale else None),
         "provider_label": label,
-        "window_label": window.get("label") or window_id,
+        "window_label": _label(window.get("label"), window_id),
         "resets_at": window.get("resetsAt") if reset_at else None,
         "used_percent": used,
     }
@@ -317,7 +326,9 @@ def _build_account_readings(
     if not isinstance(instance_id, str) or not instance_id or not isinstance(limits, dict):
         raise T3ProtocolError("T3 returned an invalid quota account")
     driver = provider.get("driver")
-    label = provider.get("displayName") or PROVIDER_NAMES.get(driver or "", driver) or instance_id
+    label = _label(
+        provider.get("displayName"), PROVIDER_NAMES.get(driver or "", driver) or instance_id
+    )
     reason = (limits.get("unavailable") or {}).get("reason")
     # Never put arbitrary server error messages in states or diagnostics.
     if reason not in ("unsupported", "probeFailed"):
@@ -397,10 +408,11 @@ def _build_limit_readings(
             if not allow_partial:
                 raise
             account_readings.clear()
+            fallback_label = f"Account {len(accounts) + 1}"
             account = {
                 "instance_id": None,
                 "provider": None,
-                "label": f"Account {len(accounts) + 1}",
+                "label": fallback_label,
                 "status": "failed",
                 "reason": "invalid_response",
                 "checked_at": None,
@@ -414,6 +426,7 @@ def _build_limit_readings(
                 ):
                     if isinstance(value := provider.get(source), str):
                         account[target] = value
+                account["label"] = _label(account["label"], fallback_label)
         if account is not None:
             accounts.append(account)
             readings.update(account_readings)
