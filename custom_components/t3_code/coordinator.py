@@ -79,6 +79,16 @@ async def fetch_snapshot(
         if isinstance(result, BaseException) and not isinstance(result, T3Error):
             raise result
     summary: Any = results[0]
+    current_day = dt_util.utcnow().astimezone(dt_util.get_time_zone(time_zone)).date()
+    if current_day != today:
+        # A slow quota refresh can carry yesterday's usage past midnight.
+        today = current_day
+        try:
+            summary = await _fetch_usage(client, descriptor, today, time_zone)
+        except T3AuthError:
+            raise
+        except T3Error as err:
+            summary = err
     if isinstance(summary, T3Error):
         if not allow_partial:
             raise summary
