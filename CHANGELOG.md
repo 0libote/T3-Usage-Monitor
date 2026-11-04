@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Treat unfamiliar usage-source statuses as partial instead of rejecting the
+  whole usage response or pairing attempt.
+- Collapse whitespace in server-provided account and window labels so they
+  cannot inject extra sections into the dashboard.
+- Bound quota refresh and its fallback with one shared timeout so a hung
+  server cannot stall a poll past the shortest interval.
 - Expire quota account statuses between polls even when an account reports no
   quota windows or reset credits.
 - Keep healthy quota accounts available when another account returns malformed

@@ -1,12 +1,16 @@
 """Independent data failures, network recovery, and supported protocol contracts."""
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from homeassistant.helpers import entity_registry as er
 
+from custom_components.t3_code import coordinator
 from custom_components.t3_code.const import DOMAIN
 
 from .test_integration import create_entry
@@ -85,6 +89,25 @@ async def test_quota_failure_keeps_usage_and_recovers(hass, t3_server, failure):
     await hass.async_block_till_done()
     assert coordinator.data.readings["limits_status"].value == "ok"
     assert coordinator.data.readings["limit/codex/primary/remaining"].value == 75
+
+
+async def test_provider_fetch_has_shared_timeout(monkeypatch, descriptor):
+    """A blackholed server cannot stall one poll past the shared budget."""
+    monkeypatch.setattr(coordinator, "PROVIDER_TIMEOUT", 0.05)
+
+    @asynccontextmanager
+    async def hanging_rpc(url):
+        class Hang:
+            async def call(self, method, payload):
+                await asyncio.sleep(3600)
+
+        yield Hang()
+
+    providers, limits_failed = await coordinator._fetch_providers(
+        SimpleNamespace(rpc=hanging_rpc), descriptor
+    )
+    assert providers == []
+    assert limits_failed is True
 
 
 async def test_server_outage_and_recovery(hass, t3_server):

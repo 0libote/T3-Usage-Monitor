@@ -174,6 +174,20 @@ async def test_wrong_identity_rejected_in_reconfigure(hass, t3_server):
     assert t3_server["pair_count"] == 0
 
 
+async def test_reconfigure_updates_connection(hass, t3_server):
+    entry = create_entry(hass, t3_server, token="old-token")
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reconfigure", "entry_id": entry.entry_id},
+        data=credentials(t3_server),
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_TOKEN] == "session-secret"
+    assert entry.data[CONF_URL] == t3_server["url"]
+    assert t3_server["pair_count"] == 1
+
+
 async def test_options(hass, t3_server):
     entry = create_entry(hass, t3_server)
     result = await hass.config_entries.options.async_init(entry.entry_id)

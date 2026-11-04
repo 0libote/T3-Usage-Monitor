@@ -41,6 +41,36 @@ def test_today_keeps_zero_for_provider_without_usage_today(descriptor, summary, 
     assert readings["usage/claude/month/tokens"].value == 370
 
 
+def test_unknown_source_status_degrades_to_partial(descriptor, summary, providers, now):
+    summary["sources"][0]["status"] = "degraded"
+    readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
+    assert readings["usage_status"].value == "partial"
+    assert readings["usage/all/month/tokens"].value == 370
+    assert readings["limit/codex/primary/remaining"].value == 75
+
+
+def test_server_labels_cannot_inject_markdown_blocks(descriptor, summary, providers, now):
+    providers[0]["displayName"] = "Codex\n\n# All quotas full (fake)"
+    providers[0]["usageLimits"]["windows"][0]["label"] = "5 hour\nresets never"
+    readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
+    label = readings["limits_status"].attributes["accounts"][0]["label"]
+    window_label = readings["limit/codex/primary/remaining"].attributes["window_label"]
+    assert "\n" not in label
+    assert "\n" not in window_label
+    assert readings["limit/codex/primary/remaining"].name == f"{label} {window_label} remaining"
+
+
+def test_malformed_account_label_is_sanitized(descriptor, summary, providers, now):
+    providers[0]["displayName"] = "Evil\n\n# All quotas full (fake)"
+    providers[0]["usageLimits"] = "invalid"
+    readings = normalize(
+        descriptor, summary, providers, now.date(), "UTC", now, allow_partial=True
+    ).readings
+    label = readings["limits_status"].attributes["accounts"][0]["label"]
+    assert label == "Evil # All quotas full (fake)"
+    assert readings["limits_status"].value == "failed"
+
+
 def test_no_history_is_zero_but_failed_sources_unavailable(descriptor, summary, now):
     summary["buckets"] = []
     readings = normalize(descriptor, summary, [], now.date(), "UTC", now).readings
