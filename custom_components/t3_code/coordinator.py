@@ -17,6 +17,8 @@ from .models import Snapshot, expire_snapshot, normalize
 
 LOGGER = logging.getLogger(__name__)
 
+PROVIDER_TIMEOUT = 180
+
 
 async def _fetch_usage(client: T3Client, descriptor: dict, today, time_zone: str) -> dict:
     async with client.rpc(descriptor) as rpc:
@@ -33,23 +35,28 @@ async def _fetch_usage(client: T3Client, descriptor: dict, today, time_zone: str
 
 
 async def _fetch_providers(client: T3Client, descriptor: dict) -> tuple[list, bool]:
+    """Bound the refresh and its fallback with one shared timeout."""
     try:
-        async with client.rpc(descriptor) as rpc:
-            refreshed = await rpc.call("server.refreshProviders", {})
-            return refreshed["providers"], False
-    except T3AuthError:
-        raise
-    except T3Error, KeyError, TypeError:
-        # A timeout/closed socket cannot be reused. Config is only a fallback
-        # for discovering unavailable sensors; cached quotas are never current.
-        try:
-            async with client.rpc(descriptor) as rpc:
-                config = await rpc.call("server.getConfig", {})
-                return config["providers"], True
-        except T3AuthError:
-            raise
-        except T3Error, KeyError, TypeError:
-            return [], True
+        async with asyncio.timeout(PROVIDER_TIMEOUT):
+            try:
+                async with client.rpc(descriptor) as rpc:
+                    refreshed = await rpc.call("server.refreshProviders", {})
+                    return refreshed["providers"], False
+            except T3AuthError:
+                raise
+            except T3Error, KeyError, TypeError:
+                # A timeout/closed socket cannot be reused. Config is only a fallback
+                # for discovering unavailable sensors; cached quotas are never current.
+                try:
+                    async with client.rpc(descriptor) as rpc:
+                        config = await rpc.call("server.getConfig", {})
+                        return config["providers"], True
+                except T3AuthError:
+                    raise
+                except T3Error, KeyError, TypeError:
+                    return [], True
+    except TimeoutError:
+        return [], True
 
 
 async def fetch_snapshot(
