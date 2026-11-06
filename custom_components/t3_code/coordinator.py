@@ -138,9 +138,9 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
             update_interval=timedelta(seconds=interval),
         )
         # DataUpdateCoordinator owns .data, but this subclass also refreshes
-        # it from the quota-expiry timer; declare it here so analysis sees
-        # the attribute as part of this class's state.
-        self.data = None
+        # it from the quota-expiry timer; declare it here (mirroring the
+        # base class) so analysis sees the attribute as part of this class.
+        self.data: Snapshot = None  # type: ignore[assignment]
         self.client = client
         self.entry = entry
         self._cancel_expiry: CALLBACK_TYPE | None = None
@@ -166,8 +166,11 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
     @callback
     def _expire_quotas(self, now: datetime) -> None:
         self._cancel_expiry = None
+        data = self.data
+        if data is None:
+            return
         try:
-            self.data = expire_snapshot(self.data, now)
+            self.data = expire_snapshot(data, now)
             # Local expiry must not mark a failed server connection successful or
             # postpone the next network poll (async_set_updated_data would do both).
             self.async_update_listeners()
