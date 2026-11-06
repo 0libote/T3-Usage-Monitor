@@ -145,75 +145,54 @@ def _group_card(label: str, group: list, entities: dict[str, str]) -> dict:
     }
 
 
-def build_dashboard(hass: HomeAssistant, entry) -> dict:
-    """Resolve actual entity IDs, including those renamed by the user."""
+def _registry_entities(hass: HomeAssistant, entry) -> dict[str, str]:
+    """Map reading keys to entity IDs, including user-renamed entities."""
     registry = er.async_get(hass)
     prefix = f"{entry.unique_id}/"
-    entities = {
+    return {
         item.unique_id.removeprefix(prefix): item.entity_id
         for item in er.async_entries_for_config_entry(registry, entry.entry_id)
         if item.platform == DOMAIN and item.unique_id.startswith(prefix) and not item.disabled
     }
-    cards = [
-        {
-            "type": "horizontal-stack",
-            "cards": [
-                summary_card("today", entities),
-                summary_card("month", entities),
-            ],
-        }
-    ]
-    # Warnings use templates so a failed refresh cannot leave a good-looking
-    # cached total on the page without an explanation.
+
+
+def _warning_card(entities: dict[str, str]) -> dict:
+    """Explain failed, expired, and unsupported accounts with templates."""
+    # Templates keep a failed refresh from leaving a good-looking cached
+    # total on the page without an explanation.
     status = entities.get("usage_status", UNAVAILABLE_ENTITY)
     limits_status = entities.get("limits_status", UNAVAILABLE_ENTITY)
     cost = entities.get("usage/all/month/cost", UNAVAILABLE_ENTITY)
-    cards.append(
-        {
-            "type": "markdown",
-            "content": "{% if states('" + status + "') == 'partial' %}"
-            "Some usage history is missing. Totals may be incomplete.\n\n{% endif %}"
-            "{% if states('" + status + "') == 'failed' %}"
-            "Usage refresh failed. Totals are unavailable.\n\n{% endif %}"
-            "{% if (state_attr('" + cost + "', 'unpriced_records') or 0) > 0 %}"
-            "Some records have no price. Cost estimates are incomplete.\n\n{% endif %}"
-            "{% if states('" + limits_status + "') == 'failed' %}"
-            "Quota refresh failed. Previous limits are unavailable.\n\n{% endif %}"
-            "{% for account in state_attr('" + limits_status + "', 'accounts') or [] %}"
-            "{% set account_label = account.label | replace('[', '(') | replace(']', ')') %}"
-            "{% if account.reason == 'invalid_response' %}"
-            "{{ account_label }}: quota response was invalid.\n\n"
-            "{% elif account.status == 'failed' %}"
-            "{{ account_label }}: quota probe failed.\n\n"
-            "{% elif account.status == 'stale' %}"
-            "{{ account_label }}: quota reading expired.\n\n"
-            "{% elif account.status == 'unsupported' %}"
-            "{{ account_label }}: limits are unsupported for this account.\n\n"
-            "{% endif %}{% endfor %}"
-            "{% if states('" + status + "') in ['unknown', 'unavailable'] %}"
-            "Waiting for current usage readings.\n\n{% endif %}"
-            "Readings refresh every five minutes by default.",
-            "entity_id": [status, limits_status, cost],
-        }
-    )
-    groups = defaultdict(list)
-    readings = getattr(getattr(entry, "runtime_data", None), "data", None)
-    if readings is None:
-        # Lovelace can ask for the page while the entry unloads or before
-        # the first refresh; show a waiting view instead of failing.
-        return _waiting_view()
-    for key, reading in readings.readings.items():
-        if key.startswith("limit/") and key.endswith("/remaining") and key in entities:
-            instance_id = reading.attributes.get("instance_id")
-            if instance_id is None:
-                continue
-            groups[instance_id].append((key, reading))
-    for group in groups.values():
-        label = group[0][1].attributes.get("provider_label", "?")
-        cards.append(_group_card(label, group, entities))
-    if not groups:
-        cards.append({"type": "markdown", "content": "No subscription limits reported yet."})
-    # Keep the overview across the top and accounts in their own sections.
+    return {
+        "type": "markdown",
+        "content": "{% if states('" + status + "') == 'partial' %}"
+        "Some usage history is missing. Totals may be incomplete.\n\n{% endif %}"
+        "{% if states('" + status + "') == 'failed' %}"
+        "Usage refresh failed. Totals are unavailable.\n\n{% endif %}"
+        "{% if (state_attr('" + cost + "', 'unpriced_records') or 0) > 0 %}"
+        "Some records have no price. Cost estimates are incomplete.\n\n{% endif %}"
+        "{% if states('" + limits_status + "') == 'failed' %}"
+        "Quota refresh failed. Previous limits are unavailable.\n\n{% endif %}"
+        "{% for account in state_attr('" + limits_status + "', 'accounts') or [] %}"
+        "{% set account_label = account.label | replace('[', '(') | replace(']', ')') %}"
+        "{% if account.reason == 'invalid_response' %}"
+        "{{ account_label }}: quota response was invalid.\n\n"
+        "{% elif account.status == 'failed' %}"
+        "{{ account_label }}: quota probe failed.\n\n"
+        "{% elif account.status == 'stale' %}"
+        "{{ account_label }}: quota reading expired.\n\n"
+        "{% elif account.status == 'unsupported' %}"
+        "{{ account_label }}: limits are unsupported for this account.\n\n"
+        "{% endif %}{% endfor %}"
+        "{% if states('" + status + "') in ['unknown', 'unavailable'] %}"
+        "Waiting for current usage readings.\n\n{% endif %}"
+        "Readings refresh every five minutes by default.",
+        "entity_id": [status, limits_status, cost],
+    }
+
+
+def _assemble_sections(cards: list) -> list:
+    """Keep the overview across the top and accounts in their own sections."""
     # Plain masonry would distribute the warning and totals among the gauges.
     sections = [
         {
@@ -230,6 +209,39 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
                 "cards": [{**item, "grid_options": {"columns": "full"}} for item in group_cards],
             }
         )
+    return sections
+
+
+def build_dashboard(hass: HomeAssistant, entry) -> dict:
+    """Resolve actual entity IDs, including those renamed by the user."""
+    entities = _registry_entities(hass, entry)
+    cards = [
+        {
+            "type": "horizontal-stack",
+            "cards": [
+                summary_card("today", entities),
+                summary_card("month", entities),
+            ],
+        },
+        _warning_card(entities),
+    ]
+    readings = getattr(getattr(entry, "runtime_data", None), "data", None)
+    if readings is None:
+        # Lovelace can ask for the page while the entry unloads or before
+        # the first refresh; show a waiting view instead of failing.
+        return _waiting_view()
+    groups: dict[str, list] = defaultdict(list)
+    for key, reading in readings.readings.items():
+        if key.startswith("limit/") and key.endswith("/remaining") and key in entities:
+            instance_id = reading.attributes.get("instance_id")
+            if instance_id is None:
+                continue
+            groups[instance_id].append((key, reading))
+    for group in groups.values():
+        label = group[0][1].attributes.get("provider_label", "?")
+        cards.append(_group_card(label, group, entities))
+    if not groups:
+        cards.append({"type": "markdown", "content": "No subscription limits reported yet."})
     return {
         "title": NAME,
         "views": [
@@ -239,7 +251,7 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
                 "icon": "mdi:chart-box-outline",
                 "type": "sections",
                 "max_columns": 2,
-                "sections": sections,
+                "sections": _assemble_sections(cards),
             }
         ],
     }
