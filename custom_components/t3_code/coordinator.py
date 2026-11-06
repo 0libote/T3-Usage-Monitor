@@ -22,18 +22,17 @@ PROVIDER_TIMEOUT = 180
 
 async def _fetch_usage(client: T3Client, descriptor: dict, today, time_zone: str) -> dict:
     try:
-        async with asyncio.timeout(PROVIDER_TIMEOUT):
-            async with client.rpc(descriptor) as rpc:
-                return await rpc.call(
-                    "server.getUsageSummary",
-                    {
-                        "sinceDay": today.replace(day=1).isoformat(),
-                        "untilDay": today.isoformat(),
-                        "timeZone": time_zone,
-                        "resolution": "day",
-                        "awaitRefresh": True,
-                    },
-                )
+        async with asyncio.timeout(PROVIDER_TIMEOUT), client.rpc(descriptor) as rpc:
+            return await rpc.call(
+                "server.getUsageSummary",
+                {
+                    "sinceDay": today.replace(day=1).isoformat(),
+                    "untilDay": today.isoformat(),
+                    "timeZone": time_zone,
+                    "resolution": "day",
+                    "awaitRefresh": True,
+                },
+            )
     except TimeoutError as err:
         raise T3Error("T3 timed out while answering the usage request") from err
 
@@ -169,13 +168,13 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
             # postpone the next network poll (async_set_updated_data would do both).
             self.async_update_listeners()
         finally:
-            # A malformed snapshot must not kill the timer chain; the next
-            # successful poll replaces the data and reschedules anyway.
-            if self.data is not None:
-                try:
-                    self._schedule_expiry(self.data)
-                except (KeyError, TypeError, AttributeError):
-                    LOGGER.warning("T3 quota expiry timer could not be rescheduled")
+            # A malformed snapshot must not kill the timer chain: on failure
+            # self.data still holds the previous snapshot, so rescheduling
+            # from it keeps expiry alive until the next successful poll.
+            try:
+                self._schedule_expiry(self.data)
+            except (KeyError, TypeError, AttributeError):
+                LOGGER.warning("T3 quota expiry timer could not be rescheduled")
 
     async def async_shutdown(self) -> None:
         if self._cancel_expiry:
