@@ -137,6 +137,10 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
             name=DOMAIN,
             update_interval=timedelta(seconds=interval),
         )
+        # DataUpdateCoordinator owns .data, but this subclass also refreshes
+        # it from the quota-expiry timer; declare it here so analysis sees
+        # the attribute as part of this class's state.
+        self.data = None
         self.client = client
         self.entry = entry
         self._cancel_expiry: CALLBACK_TYPE | None = None
