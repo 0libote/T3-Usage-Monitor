@@ -73,6 +73,78 @@ def summary_card(period: str, entities: dict[str, str]) -> dict:
     }
 
 
+def _waiting_view() -> dict:
+    """Show while Lovelace asks before the first refresh or during unload."""
+    return {
+        "title": NAME,
+        "views": [
+            {
+                "title": "Overview",
+                "path": "overview",
+                "icon": "mdi:chart-box-outline",
+                "type": "sections",
+                "max_columns": 2,
+                "sections": [
+                    {
+                        "type": "grid",
+                        "cards": [
+                            {
+                                "type": "markdown",
+                                "content": "Waiting for current usage readings.",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _group_card(label: str, group: list, entities: dict[str, str]) -> dict:
+    """Build one account's gauges plus its reset countdown lines."""
+    provider_cards = []
+    resets = []
+    for key, reading in group:
+        entity_id = entities[key]
+        window = _md(str(reading.attributes.get("window_label", "?")))
+        provider_cards.append(
+            {
+                "type": "gauge",
+                "entity": entity_id,
+                "name": window,
+                "min": 0,
+                "max": 100,
+                "unit": "% left",
+                "needle": True,
+                "severity": {"red": 0, "yellow": 20, "green": 50},
+            }
+        )
+        # Read the timestamp attribute at render time, so countdowns keep
+        # working between server polls. Labels come from the entity, not
+        # interpolated server text that could be interpreted as Jinja.
+        resets.append(
+            "{% set stamp = as_datetime(state_attr('" + entity_id + "', 'resets_at'), none) %}\n"
+            "{{ state_attr('" + entity_id + "', 'window_label') }}: "
+            "{% if states('" + entity_id + "') in ['unknown', 'unavailable'] %}Unavailable"
+            "{% elif stamp and stamp > now() %}resets in {{ time_until(stamp, 1) }}"
+            "{% elif stamp %}waiting for a new window"
+            "{% else %}reset time not reported{% endif %}"
+        )
+    return {
+        "type": "vertical-stack",
+        "cards": [
+            {"type": "heading", "heading": label, "icon": "mdi:gauge"},
+            {
+                "type": "grid",
+                "columns": min(len(provider_cards), 3),
+                "square": False,
+                "cards": provider_cards,
+            },
+            {"type": "markdown", "content": "\n\n".join(resets)},
+        ],
+    }
+
+
 def build_dashboard(hass: HomeAssistant, entry) -> dict:
     """Resolve actual entity IDs, including those renamed by the user."""
     registry = er.async_get(hass)
@@ -129,82 +201,16 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
     if readings is None:
         # Lovelace can ask for the page while the entry unloads or before
         # the first refresh; show a waiting view instead of failing.
-        return {
-            "title": NAME,
-            "views": [
-                {
-                    "title": "Overview",
-                    "path": "overview",
-                    "icon": "mdi:chart-box-outline",
-                    "type": "sections",
-                    "max_columns": 2,
-                    "sections": [
-                        {
-                            "type": "grid",
-                            "cards": [
-                                {
-                                    "type": "markdown",
-                                    "content": "Waiting for current usage readings.",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
+        return _waiting_view()
     for key, reading in readings.readings.items():
         if key.startswith("limit/") and key.endswith("/remaining") and key in entities:
             instance_id = reading.attributes.get("instance_id")
             if instance_id is None:
                 continue
             groups[instance_id].append((key, reading))
-    for readings in groups.values():
-        provider_cards = []
-        resets = []
-        label = readings[0][1].attributes.get("provider_label", "?")
-        for key, reading in readings:
-            entity_id = entities[key]
-            window = _md(str(reading.attributes.get("window_label", "?")))
-            provider_cards.append(
-                {
-                    "type": "gauge",
-                    "entity": entity_id,
-                    "name": window,
-                    "min": 0,
-                    "max": 100,
-                    "unit": "% left",
-                    "needle": True,
-                    "severity": {"red": 0, "yellow": 20, "green": 50},
-                }
-            )
-            # Read the timestamp attribute at render time, so countdowns keep
-            # working between server polls. Labels come from the entity, not
-            # interpolated server text that could be interpreted as Jinja.
-            resets.append(
-                "{% set stamp = as_datetime(state_attr('"
-                + entity_id
-                + "', 'resets_at'), none) %}\n"
-                "{{ state_attr('" + entity_id + "', 'window_label') }}: "
-                "{% if states('" + entity_id + "') in ['unknown', 'unavailable'] %}Unavailable"
-                "{% elif stamp and stamp > now() %}resets in {{ time_until(stamp, 1) }}"
-                "{% elif stamp %}waiting for a new window"
-                "{% else %}reset time not reported{% endif %}"
-            )
-        cards.append(
-            {
-                "type": "vertical-stack",
-                "cards": [
-                    {"type": "heading", "heading": label, "icon": "mdi:gauge"},
-                    {
-                        "type": "grid",
-                        "columns": min(len(provider_cards), 3),
-                        "square": False,
-                        "cards": provider_cards,
-                    },
-                    {"type": "markdown", "content": "\n\n".join(resets)},
-                ],
-            }
-        )
+    for group in groups.values():
+        label = group[0][1].attributes.get("provider_label", "?")
+        cards.append(_group_card(label, group, entities))
     if not groups:
         cards.append({"type": "markdown", "content": "No subscription limits reported yet."})
     # Keep the overview across the top and accounts in their own sections.

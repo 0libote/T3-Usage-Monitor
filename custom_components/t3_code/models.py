@@ -274,6 +274,35 @@ def _build_provider_readings(
         )
 
 
+def _normalize_percent(used: Any) -> tuple[int | float, int | float]:
+    """Validate a quota percentage and return consistent used/remaining pair."""
+    # Round away float dust (e.g. 100.0000001) while still rejecting real
+    # overflows like 101; remaining stays consistent with the shown value.
+    normalized = round(float(_number(used)), 4)
+    if normalized > 100:
+        raise T3ProtocolError("T3 returned an invalid quota percentage")
+    remaining = round(100 - normalized, 4)
+    if normalized == int(normalized):
+        normalized = int(normalized)
+    if remaining == int(remaining):
+        remaining = int(remaining)
+    return normalized, remaining
+
+
+def _has_future_reset(windows: list, now: datetime) -> bool:
+    """Check whether any window reports a reset still in the future."""
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        try:
+            stamp = _timestamp(window.get("resetsAt"))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if stamp is not None and stamp > now:
+            return True
+    return False
+
+
 def _add_window(
     readings: dict[str, Reading],
     instance_id: str,
@@ -291,16 +320,7 @@ def _add_window(
     used = window.get("usedPercent")
     if not isinstance(window_id, str) or used is None:
         return None
-    # Round away float dust (e.g. 100.0000001) while still rejecting real
-    # overflows like 101; remaining stays consistent with the shown value.
-    used = round(float(_number(used)), 4)
-    if used > 100:
-        raise T3ProtocolError("T3 returned an invalid quota percentage")
-    remaining = round(100 - used, 4)
-    if used == int(used):
-        used = int(used)
-    if remaining == int(remaining):
-        remaining = int(remaining)
+    used, remaining = _normalize_percent(used)
     reset_at = _timestamp(window.get("resetsAt"))
     # A far-future reset outlives the two-hour check cap; the cap only
     # applies when no reset was reported.
@@ -393,17 +413,7 @@ def _build_account_readings(
     # A future window reset means fresh data is still valid even when the
     # last check is older than the cap; only missing/skewed checks with no
     # usable reset count as stale here.
-    has_future_reset = False
-    for window in windows:
-        if not isinstance(window, dict):
-            raise T3ProtocolError("T3 returned an invalid quota window")
-        try:
-            stamp = _timestamp(window.get("resetsAt"))
-        except (ValueError, TypeError, AttributeError):
-            stamp = None
-        if stamp is not None and stamp > now:
-            has_future_reset = True
-            break
+    has_future_reset = _has_future_reset(windows, now)
     checked_bad = checked_at is None or checked_at > now + timedelta(minutes=5)
     checked_old = checked_expiry is not None and checked_expiry <= now
     stale = checked_bad or (checked_old and not has_future_reset)
