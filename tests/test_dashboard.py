@@ -195,3 +195,30 @@ async def test_malformed_account_has_an_explanation(hass, t3_server):
     warning = list(markdown_cards(build_dashboard(hass, entry)))[2]
     rendered = template.Template(warning["content"], hass).async_render(parse_result=False)
     assert "Codex: quota response was invalid." in rendered
+
+
+async def test_server_label_cannot_inject_links(hass, t3_server):
+    t3_server["providers"][0]["displayName"] = "[Click](https://evil.example)"
+    t3_server["providers"][0]["usageLimits"]["windows"] = []
+    t3_server["providers"][0]["usageLimits"]["unavailable"] = {"reason": "probeFailed"}
+    entry = create_entry(hass, t3_server)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    config = build_dashboard(hass, entry)
+    rendered = [
+        template.Template(card["content"], hass).async_render(parse_result=False)
+        for card in markdown_cards(config)
+    ]
+    assert "](" not in "".join(rendered)
+    assert "(Click)(https://evil.example)" in "".join(rendered)
+
+
+async def test_dashboard_waiting_when_no_data(hass, t3_server):
+    from unittest.mock import patch
+
+    entry = create_entry(hass, t3_server)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    with patch.object(entry.runtime_data, "data", None):
+        config = build_dashboard(hass, entry)
+    assert "Waiting for current usage readings." in list(markdown_cards(config))[0]["content"]

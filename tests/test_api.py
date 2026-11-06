@@ -8,6 +8,7 @@ from custom_components.t3_code.api import (
     T3Client,
     T3Error,
     T3ProtocolError,
+    T3Rpc,
     parse_connection,
 )
 from custom_components.t3_code.coordinator import fetch_snapshot
@@ -17,7 +18,6 @@ from custom_components.t3_code.coordinator import fetch_snapshot
     ("address", "credential", "expected"),
     [
         ("https://example.test/pair#token=abc%2B123", "", ("https://example.test", "abc+123")),
-        ("http://host:3773/pair?token=abc", "", ("http://host:3773", "abc")),
         ("ws://host:3773/ws", "bearer", ("http://host:3773", "bearer")),
         ("https://HOST/", "override", ("https://host", "override")),
     ],
@@ -35,6 +35,7 @@ def test_connections(address, credential, expected):
         "https://host:invalid",
         "not-a-url",
         "https://host",
+        "http://host:3773/pair?token=abc",
     ],
 )
 def test_invalid_connections(address):
@@ -110,3 +111,33 @@ async def test_unknown_protocol(t3_server):
         client = T3Client(session, t3_server["url"])
         with pytest.raises(T3ProtocolError):
             await client.descriptor()
+
+
+@pytest.mark.parametrize(
+    ("causes", "expected"),
+    [
+        ([{"error": {"_tag": "EnvironmentAuthorizationError"}}], True),
+        ([{"error": {"_tag": "AuthorizationError"}}], True),
+        ([{"error": {"_tag": "Unauthenticated"}}], True),
+        ([{"error": {"_tag": "TokenExpired"}}], True),
+        ([{"error": {"_tag": "UsageReadError"}}], False),
+        ([{"error": {"_tag": "NotFound"}}], False),
+        ([], False),
+        (None, False),
+    ],
+)
+def test_auth_failure_tag_family(causes, expected):
+    assert T3Rpc._is_auth_failure(causes) is expected
+
+
+def test_cleartext_remote_host_warns(caplog):
+    with caplog.at_level("WARNING", logger="custom_components.t3_code.api"):
+        url, _ = parse_connection("http://192.168.1.20:3773", "tok")
+    assert url == "http://192.168.1.20:3773"
+    assert "cleartext" in caplog.text
+
+
+def test_loopback_cleartext_quiet(caplog):
+    with caplog.at_level("WARNING", logger="custom_components.t3_code.api"):
+        parse_connection("http://127.0.0.1:3773", "tok")
+    assert "cleartext" not in caplog.text

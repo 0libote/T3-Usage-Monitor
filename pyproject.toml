@@ -30,7 +30,10 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.ruff]
-target-version = "py314"
+# The minimum supported Home Assistant release predates Python 3.14, where
+# `except A, B:` without parentheses is a SyntaxError. Keep the target at
+# 3.13 so the formatter never strips the parentheses back off.
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]

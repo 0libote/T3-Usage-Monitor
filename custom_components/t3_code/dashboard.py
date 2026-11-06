@@ -16,7 +16,25 @@ from .const import CONF_SHOW_DASHBOARD, DOMAIN, NAME
 
 LOGGER = logging.getLogger(__name__)
 
-UNAVAILABLE_ENTITY = "sensor.t3_unavailable"
+UNAVAILABLE_ENTITY = "sensor.t3_usage_monitor_missing"
+
+
+def _md(value: str) -> str:
+    """Escape markdown link syntax in server-controlled labels.
+
+    Headings and gauge names are safe, but warning lines and reset lists are
+    markdown: without this, a display name like ``[Click](https://evil)``
+    would render as a real link. Only brackets and parens are escaped, so
+    plain labels (including ``#``) render unchanged.
+    """
+    return (
+        value.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
+    )
+
 
 FORMAT_TOKENS = """{% macro tokens(value) -%}
 {% if not is_number(value) %}Unavailable
@@ -40,7 +58,13 @@ def summary_card(period: str, entities: dict[str, str]) -> dict:
         + "{% set cost = states('"
         + cost
         + "') %}\n"
-        + "# {% if is_number(cost) %}${{ '%.2f' | format(cost | float) }}"
+        + "# {% if has_value('"
+        + cost
+        + "') and is_number(states('"
+        + cost
+        + "')) %}${{ '%.2f' | format(states('"
+        + cost
+        + "') | float) }}"
         + "{% else %}Unavailable{% endif %}\n"
         + "{{ tokens(states('"
         + tokens
@@ -84,14 +108,15 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
             "{% if states('" + limits_status + "') == 'failed' %}"
             "Quota refresh failed. Previous limits are unavailable.\n\n{% endif %}"
             "{% for account in state_attr('" + limits_status + "', 'accounts') or [] %}"
+            "{% set account_label = account.label | replace('[', '(') | replace(']', ')') %}"
             "{% if account.reason == 'invalid_response' %}"
-            "{{ account.label }}: quota response was invalid.\n\n"
+            "{{ account_label }}: quota response was invalid.\n\n"
             "{% elif account.status == 'failed' %}"
-            "{{ account.label }}: quota probe failed.\n\n"
+            "{{ account_label }}: quota probe failed.\n\n"
             "{% elif account.status == 'stale' %}"
-            "{{ account.label }}: quota reading expired.\n\n"
+            "{{ account_label }}: quota reading expired.\n\n"
             "{% elif account.status == 'unsupported' %}"
-            "{{ account.label }}: subscription limits are unsupported for this account.\n\n"
+            "{{ account_label }}: limits are unsupported for this account.\n\n"
             "{% endif %}{% endfor %}"
             "{% if states('" + status + "') in ['unknown', 'unavailable'] %}"
             "Waiting for current usage readings.\n\n{% endif %}"
@@ -100,16 +125,46 @@ def build_dashboard(hass: HomeAssistant, entry) -> dict:
         }
     )
     groups = defaultdict(list)
-    for key, reading in entry.runtime_data.data.readings.items():
+    readings = getattr(getattr(entry, "runtime_data", None), "data", None)
+    if readings is None:
+        # Lovelace can ask for the page while the entry unloads or before
+        # the first refresh; show a waiting view instead of failing.
+        return {
+            "title": NAME,
+            "views": [
+                {
+                    "title": "Overview",
+                    "path": "overview",
+                    "icon": "mdi:chart-box-outline",
+                    "type": "sections",
+                    "max_columns": 2,
+                    "sections": [
+                        {
+                            "type": "grid",
+                            "cards": [
+                                {
+                                    "type": "markdown",
+                                    "content": "Waiting for current usage readings.",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    for key, reading in readings.readings.items():
         if key.startswith("limit/") and key.endswith("/remaining") and key in entities:
-            groups[reading.attributes["instance_id"]].append((key, reading))
+            instance_id = reading.attributes.get("instance_id")
+            if instance_id is None:
+                continue
+            groups[instance_id].append((key, reading))
     for readings in groups.values():
         provider_cards = []
         resets = []
-        label = readings[0][1].attributes["provider_label"]
+        label = readings[0][1].attributes.get("provider_label", "?")
         for key, reading in readings:
             entity_id = entities[key]
-            window = reading.attributes["window_label"]
+            window = _md(str(reading.attributes.get("window_label", "?")))
             provider_cards.append(
                 {
                     "type": "gauge",
