@@ -147,6 +147,7 @@ def test_malformed_account_still_rejected_during_pairing(descriptor, summary, pr
 
 
 def test_single_bad_bucket_skipped_with_partial_status(descriptor, summary, now):
+    """One bad bucket is skipped; good buckets still count."""
     bad = deepcopy(summary["buckets"][0])
     bad["day"] = "not-a-day"
     summary["buckets"].append(bad)
@@ -157,12 +158,14 @@ def test_single_bad_bucket_skipped_with_partial_status(descriptor, summary, now)
 
 
 def test_all_bad_buckets_rejected_strict(descriptor, summary, now):
+    """No usable buckets fails closed in strict mode."""
     summary["buckets"][0]["day"] = "not-a-day"
     with pytest.raises(T3ProtocolError):
         normalize(descriptor, summary, [], now.date(), "UTC", now)
 
 
 def test_empty_sources_partial_without_values(descriptor, summary, now):
+    """Empty sources read as partial with no values."""
     summary["sources"] = []
     readings = normalize(
         descriptor, summary, [], now.date(), "UTC", now, allow_partial=True
@@ -172,6 +175,7 @@ def test_empty_sources_partial_without_values(descriptor, summary, now):
 
 
 def test_empty_buckets_keep_zero_with_ok_sources(descriptor, summary, now):
+    """Empty history with healthy sources stays zero, not failed."""
     summary["buckets"] = []
     readings = normalize(descriptor, summary, [], now.date(), "UTC", now).readings
     assert readings["usage_status"].value == "ok"
@@ -180,12 +184,14 @@ def test_empty_buckets_keep_zero_with_ok_sources(descriptor, summary, now):
 
 @pytest.mark.parametrize("value", [1.5, -0.5])
 def test_fractional_tokens_rejected(descriptor, summary, now, value):
+    """Fractional or negative token counts are rejected."""
     summary["buckets"][0]["totals"]["outputTokens"] = value
     with pytest.raises(T3ProtocolError):
         normalize(descriptor, summary, [], now.date(), "UTC", now)
 
 
 def test_integral_float_tokens_sum_as_int(descriptor, summary, now):
+    """Integral floats like 100.0 sum as ints."""
     summary["buckets"][0]["totals"]["outputTokens"] = 100.0
     value = (
         normalize(descriptor, summary, [], now.date(), "UTC", now)
@@ -197,6 +203,7 @@ def test_integral_float_tokens_sum_as_int(descriptor, summary, now):
 
 
 def test_quota_rounding_dust_clamped(descriptor, summary, providers, now):
+    """Float dust near 100% is clamped, not rejected."""
     providers[0]["usageLimits"]["windows"][0]["usedPercent"] = 100.0000001
     readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
     assert readings["limit/codex/primary/used"].value == 100
@@ -205,12 +212,14 @@ def test_quota_rounding_dust_clamped(descriptor, summary, providers, now):
 
 
 def test_quota_overflow_rejected_strict(descriptor, summary, providers, now):
+    """A real overflow like 101% is rejected."""
     providers[0]["usageLimits"]["windows"][0]["usedPercent"] = 101
     with pytest.raises(T3ProtocolError):
         normalize(descriptor, summary, providers, now.date(), "UTC", now)
 
 
 def test_naive_timestamps_assumed_utc(descriptor, summary, providers, now):
+    """Timestamps without an offset are read as UTC."""
     providers[0]["usageLimits"]["checkedAt"] = "2026-10-19T12:00:00"
     providers[0]["usageLimits"]["windows"][0]["resetsAt"] = "2099-01-01T00:00:00"
     readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
@@ -219,6 +228,7 @@ def test_naive_timestamps_assumed_utc(descriptor, summary, providers, now):
 
 
 def test_quota_keys_escaped_without_collision(descriptor, summary, now):
+    """Slashes in server IDs cannot collide sensor keys."""
     providers = [
         {
             "instanceId": "a/b",
@@ -261,6 +271,7 @@ def test_quota_keys_escaped_without_collision(descriptor, summary, now):
 
 
 def test_non_dict_reset_credits_skipped_strict(descriptor, summary, providers, now):
+    """A malformed optional field is skipped, not fatal."""
     providers[0]["usageLimits"]["resetCredits"] = 5
     readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
     assert readings["limits_status"].value == "ok"
@@ -268,11 +279,13 @@ def test_non_dict_reset_credits_skipped_strict(descriptor, summary, providers, n
 
 
 def test_empty_providers_unsupported_without_failure(descriptor, summary, now):
+    """No quota accounts reads as unsupported, not ok."""
     readings = normalize(descriptor, summary, [], now.date(), "UTC", now).readings
     assert readings["limits_status"].value == "unsupported"
 
 
 def test_empty_providers_failed_after_refresh_failure(descriptor, summary, now):
+    """No quota accounts after a failed refresh reads as failed."""
     readings = normalize(
         descriptor, summary, [], now.date(), "UTC", now, limits_failed=True, allow_partial=True
     ).readings
@@ -280,6 +293,7 @@ def test_empty_providers_failed_after_refresh_failure(descriptor, summary, now):
 
 
 def test_far_future_reset_outlives_check_cap(descriptor, summary, providers):
+    """A far-future reset outlives the two-hour check cap."""
     from custom_components.t3_code.models import expire_snapshot
 
     checked = datetime(2026, 10, 19, 12, tzinfo=UTC)
