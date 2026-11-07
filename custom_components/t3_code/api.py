@@ -5,7 +5,9 @@ T3's bootstrap token exchange; usage is read through the same RPCs as its UI.
 """
 
 import asyncio
+import ipaddress
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import parse_qs, urlsplit, urlunsplit
@@ -13,6 +15,8 @@ from urllib.parse import parse_qs, urlsplit, urlunsplit
 from aiohttp import ClientError, ClientSession, WSMsgType, WSServerHandshakeError
 
 from .const import SCOPES
+
+LOGGER = logging.getLogger(__name__)
 
 
 class T3Error(Exception):
@@ -25,6 +29,16 @@ class T3AuthError(T3Error):
 
 class T3ProtocolError(T3Error):
     """The server does not speak a supported contract."""
+
+
+def _is_loopback(hostname: str) -> bool:
+    """Check for localhost without resolving DNS."""
+    if hostname.lower() in ("localhost",):
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def parse_connection(address: str, credential: str = "") -> tuple[str, str]:
@@ -41,11 +55,19 @@ def parse_connection(address: str, credential: str = "") -> tuple[str, str]:
     # Accessing port validates malformed port numbers too.
     _ = parts.port
     scheme = {"ws": "http", "wss": "https"}.get(parts.scheme, parts.scheme)
-    embedded = parse_qs(parts.fragment).get("token", []) or parse_qs(parts.query).get("token", [])
+    # Only the URL fragment carries a token. A query string would be sent to
+    # the server and land in logs and history, so it is never accepted.
+    embedded = parse_qs(parts.fragment).get("token", [])
     token = credential.strip() or (embedded[0].strip() if embedded else "")
     if not token:
         raise ValueError("A pairing or bearer token is required")
-    return urlunsplit((scheme, parts.netloc.lower(), "", "", "")), token
+    url = urlunsplit((scheme, parts.netloc.lower(), "", "", ""))
+    if scheme == "http" and not _is_loopback(parts.hostname or ""):
+        LOGGER.warning(
+            "T3 server uses cleartext HTTP to a non-loopback host; "
+            "pairing and bearer tokens cross the network unencrypted"
+        )
+    return url, token
 
 
 def _check_status(status: int) -> None:
@@ -87,6 +109,9 @@ class T3Client:
 
     async def pair(self, credential: str) -> str:
         """Exchange a one-time credential for a bearer session with read scopes."""
+        # The server response carries no scope claim, so granted scopes
+        # cannot be checked here; an under-scoped bearer surfaces later as
+        # an authorization error during the usage probe.
         form = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": credential,
@@ -157,12 +182,21 @@ class T3Rpc:
             causes = [causes]
         if not isinstance(causes, list):
             return False
-        return any(
-            isinstance(cause, dict)
-            and isinstance(cause.get("error"), dict)
-            and cause["error"].get("_tag") == "EnvironmentAuthorizationError"
-            for cause in causes
-        )
+        for cause in causes:
+            if not isinstance(cause, dict) or not isinstance(cause.get("error"), dict):
+                continue
+            tag = str(cause["error"].get("_tag", ""))
+            # The known tag is EnvironmentAuthorizationError; other servers
+            # and versions word auth denials differently, so match the family
+            # instead of one exact string. Anything left over stays a plain
+            # request error so reauth is never triggered by mistake.
+            if (
+                "uthoriz" in tag
+                or "uthenticat" in tag
+                or tag in ("Unauthenticated", "TokenExpired", "InvalidToken")
+            ):
+                return True
+        return False
 
     @staticmethod
     def _exit_value(data: dict[str, Any], request_id: str) -> tuple[bool, Any]:

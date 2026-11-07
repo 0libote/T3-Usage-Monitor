@@ -34,7 +34,10 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
-        self._pending_auth: tuple[str, str, str, str, str] | None = None
+        # (url, credential type, server identity, bearer). The raw pairing
+        # credential is never kept: it may be one-time, while the bearer
+        # can be reused when a later probe step is retried.
+        self._pending_auth: tuple[str, str, str, str] | None = None
 
     def _schema(self) -> vol.Schema:
         default_url = ""
@@ -56,10 +59,16 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-    async def _check_identity(self, identity: str) -> FlowResult | None:
+    async def _check_identity(self, identity: str, url: str) -> FlowResult | None:
         """Abort when reauth/reconfigure targets a different server."""
         if self.source == config_entries.SOURCE_REAUTH:
-            if identity != self._get_reauth_entry().unique_id:
+            entry = self._get_reauth_entry()
+            if identity != entry.unique_id:
+                return self.async_abort(reason="wrong_server")
+            # Reauth refreshes the credential for the same address; a new
+            # address belongs in the reconfigure flow, and an attacker link
+            # echoing our identity must not rewrite the stored URL.
+            if url != entry.data[CONF_URL]:
                 return self.async_abort(reason="wrong_server")
         elif self.source == config_entries.SOURCE_RECONFIGURE:
             if identity != self._get_reconfigure_entry().unique_id:
@@ -74,10 +83,11 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> None:
         """Exchange a pairing token once; reuse the bearer within this flow."""
         # A successful exchange consumes a pairing token. If probing metrics
-        # fails, retain the bearer in this flow so a retry doesn't consume it again.
-        cache_key = (url, credential, credential_type, identity)
-        if self._pending_auth and self._pending_auth[:4] == cache_key:
-            client.token = self._pending_auth[4]
+        # fails, retain the bearer (never the raw pairing credential) in this
+        # flow so a retry doesn't consume another one-time token.
+        cache_key = (url, credential_type, identity)
+        if self._pending_auth and self._pending_auth[:3] == cache_key:
+            client.token = self._pending_auth[3]
         elif credential_type == "pairing":
             await client.pair(credential)
             self._pending_auth = (*cache_key, client.token)
@@ -107,10 +117,10 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if (
                 self._pending_auth
                 and self._pending_auth[0] == url
-                and self._pending_auth[3] != descriptor["environmentId"]
+                and self._pending_auth[2] != descriptor["environmentId"]
             ):
                 return self.async_abort(reason="wrong_server")
-            if abort := await self._check_identity(descriptor["environmentId"]):
+            if abort := await self._check_identity(descriptor["environmentId"], url):
                 return abort
             await self._ensure_token(
                 client,
@@ -131,7 +141,7 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "unsupported_server"
         except T3Error:
             errors["base"] = "cannot_connect"
-        except KeyError, TypeError, AttributeError:
+        except (KeyError, TypeError, AttributeError):
             errors["base"] = "unsupported_server"
         return self.async_show_form(step_id=step_id, data_schema=self._schema(), errors=errors)
 

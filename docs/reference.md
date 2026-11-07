@@ -41,7 +41,8 @@ t3 auth pairing create \
 Choose Pairing token / link in Home Assistant. Paste the full
 `http(s)://…/pair#token=…` link into the URL field and leave the credential field
 blank. Or enter the server URL and put the pairing token in the credential
-field. The query-string form `/pair?token=…` also works.
+field. Only the `#token=…` fragment form is accepted; a `?token=…` query
+string is rejected because it would be sent to the server and kept in logs.
 
 Pairing tokens are single-use. The integration exchanges one for a bearer
 session with `orchestration:read` and `diagnostics:read` permissions, then saves

@@ -21,17 +21,20 @@ PROVIDER_TIMEOUT = 180
 
 
 async def _fetch_usage(client: T3Client, descriptor: dict, today, time_zone: str) -> dict:
-    async with client.rpc(descriptor) as rpc:
-        return await rpc.call(
-            "server.getUsageSummary",
-            {
-                "sinceDay": today.replace(day=1).isoformat(),
-                "untilDay": today.isoformat(),
-                "timeZone": time_zone,
-                "resolution": "day",
-                "awaitRefresh": True,
-            },
-        )
+    try:
+        async with asyncio.timeout(PROVIDER_TIMEOUT), client.rpc(descriptor) as rpc:
+            return await rpc.call(
+                "server.getUsageSummary",
+                {
+                    "sinceDay": today.replace(day=1).isoformat(),
+                    "untilDay": today.isoformat(),
+                    "timeZone": time_zone,
+                    "resolution": "day",
+                    "awaitRefresh": True,
+                },
+            )
+    except TimeoutError as err:
+        raise T3Error("T3 timed out while answering the usage request") from err
 
 
 async def _fetch_providers(client: T3Client, descriptor: dict) -> tuple[list, bool]:
@@ -44,7 +47,7 @@ async def _fetch_providers(client: T3Client, descriptor: dict) -> tuple[list, bo
                     return refreshed["providers"], False
             except T3AuthError:
                 raise
-            except T3Error, KeyError, TypeError:
+            except (T3Error, KeyError, TypeError):
                 # A timeout/closed socket cannot be reused. Config is only a fallback
                 # for discovering unavailable sensors; cached quotas are never current.
                 try:
@@ -53,7 +56,7 @@ async def _fetch_providers(client: T3Client, descriptor: dict) -> tuple[list, bo
                         return config["providers"], True
                 except T3AuthError:
                     raise
-                except T3Error, KeyError, TypeError:
+                except (T3Error, KeyError, TypeError):
                     return [], True
     except TimeoutError:
         return [], True
@@ -79,20 +82,29 @@ async def fetch_snapshot(
         if isinstance(result, BaseException) and not isinstance(result, T3Error):
             raise result
     summary: Any = results[0]
-    current_day = dt_util.utcnow().astimezone(dt_util.get_time_zone(time_zone)).date()
+    # One instant for the day check and the snapshot, so usage windows and
+    # quota ages cannot straddle midnight differently.
+    poll_now = dt_util.utcnow()
+    current_day = poll_now.astimezone(dt_util.get_time_zone(time_zone)).date()
     if current_day != today:
         # A slow quota refresh can carry yesterday's usage past midnight.
+        # The re-fetch is bounded so one slow poll cannot stall past the
+        # shortest interval; a failed re-fetch still fails the cycle
+        # because yesterday's buckets would be wrong for the new day.
         today = current_day
         try:
-            summary = await _fetch_usage(client, descriptor, today, time_zone)
+            async with asyncio.timeout(PROVIDER_TIMEOUT):
+                summary = await _fetch_usage(client, descriptor, today, time_zone)
         except T3AuthError:
             raise
-        except T3Error as err:
+        except (T3Error, TimeoutError) as err:
             summary = err
     if isinstance(summary, T3Error):
         if not allow_partial:
             raise summary
         summary = None
+    if not isinstance(results[1], tuple):
+        raise T3Error("T3 returned an invalid provider response")
     providers, limits_failed = results[1]
     snapshot = normalize(
         descriptor,
@@ -100,7 +112,9 @@ async def fetch_snapshot(
         providers,
         today,
         time_zone,
-        dt_util.utcnow(),
+        # Same instant the current day was read, so usage windows and quota
+        # ages cannot straddle midnight differently.
+        poll_now,
         limits_failed=limits_failed,
         allow_partial=allow_partial,
     )
@@ -123,6 +137,10 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
             name=DOMAIN,
             update_interval=timedelta(seconds=interval),
         )
+        # DataUpdateCoordinator owns .data, but this subclass also refreshes
+        # it from the quota-expiry timer; declare it here (mirroring the
+        # base class) so analysis sees the attribute as part of this class.
+        self.data: Snapshot = None  # type: ignore[assignment]
         self.client = client
         self.entry = entry
         self._cancel_expiry: CALLBACK_TYPE | None = None
@@ -148,11 +166,22 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
     @callback
     def _expire_quotas(self, now: datetime) -> None:
         self._cancel_expiry = None
-        self.data = expire_snapshot(self.data, now)
-        # Local expiry must not mark a failed server connection successful or
-        # postpone the next network poll (async_set_updated_data would do both).
-        self.async_update_listeners()
-        self._schedule_expiry(self.data)
+        data = self.data
+        if data is None:
+            return
+        try:
+            self.data = expire_snapshot(data, now)
+            # Local expiry must not mark a failed server connection successful or
+            # postpone the next network poll (async_set_updated_data would do both).
+            self.async_update_listeners()
+        finally:
+            # A malformed snapshot must not kill the timer chain: on failure
+            # self.data still holds the previous snapshot, so rescheduling
+            # from it keeps expiry alive until the next successful poll.
+            try:
+                self._schedule_expiry(self.data)
+            except (KeyError, TypeError, AttributeError):
+                LOGGER.warning("T3 quota expiry timer could not be rescheduled")
 
     async def async_shutdown(self) -> None:
         if self._cancel_expiry:

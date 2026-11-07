@@ -23,6 +23,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: T3ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    # Registry migration rewrites entry.data, which would retrigger the
+    # reload listener below if it were already registered; keep this order.
     async_prepare_registry(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_dashboard(hass, entry)

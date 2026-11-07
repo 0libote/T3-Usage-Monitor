@@ -206,3 +206,31 @@ async def test_pairing_rejects_null_usage_response(hass, t3_server):
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "unsupported_server"}
     assert t3_server["pair_count"] == 1
+
+
+async def test_reauth_rejects_url_change_with_echoed_identity(hass, t3_server, monkeypatch):
+    from custom_components.t3_code import api as api_module
+
+    entry = create_entry(hass, t3_server)
+
+    async def echo_identity(self):
+        # Same identity echoed by a different URL, as in a spoofed link.
+        return {
+            "environmentId": "test-server",
+            "label": "T",
+            "orchestrationProtocolVersion": 2,
+        }
+
+    monkeypatch.setattr(api_module.T3Client, "descriptor", echo_identity)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reauth", "entry_id": entry.entry_id}
+    )
+    assert result["type"] is FlowResultType.FORM
+    other = dict(credentials(t3_server))
+    other[CONF_URL] = "http://127.0.0.2:9/"
+    other[CONF_CREDENTIAL_TYPE] = "bearer"
+    other[CONF_CREDENTIAL] = "session-secret"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], other)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "wrong_server"
+    assert entry.data[CONF_URL] == t3_server["url"]

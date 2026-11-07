@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Fix `except A, B:` clauses that only parse on Python 3.14; parenthesized
+  forms work on every supported interpreter.
+- Skip single malformed usage buckets instead of failing the whole summary,
+  and report empty usage/quota responses as partial/unsupported, never `ok`.
+- Require whole token counts (integral floats accepted, fractions rejected),
+  validate totals are finite, and round money sums.
+- Clamp float dust in quota percentages, escape server IDs in sensor keys so
+  `a/b` can no longer overwrite `a`'s `b/c` window, and prefer a reported
+  reset time over the two-hour check cap so long windows stop flapping.
+- Assume UTC for naive server timestamps so readings can still expire.
+- Only accept pairing tokens from the URL fragment; query-string tokens are
+  rejected, and cleartext hosts outside loopback log a warning.
+- Treat the wider family of RPC authorization errors as auth failures so dead
+  sessions prompt reauth, and keep reauth pinned to its stored address.
+- Escape markdown link syntax in server-controlled dashboard labels, show a
+  waiting view when data is not ready yet, and guard local expiry so one bad
+  snapshot cannot stop the timer chain.
+- Bound the usage fetch and the midnight re-fetch with the shared timeout and
+  stop the re-fetch from stranding mismatched day/age stamps.
+- Keep the raw pairing token out of flow state; only the bearer is retained
+  for retries.
+
 - Treat unfamiliar usage-source statuses as partial instead of rejecting the
   whole usage response or pairing attempt.
 - Collapse whitespace in server-provided account and window labels so they

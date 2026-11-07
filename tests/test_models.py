@@ -1,7 +1,7 @@
 """Correct accounting, period resets, and unavailable readings."""
 
 from copy import deepcopy
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -144,3 +144,150 @@ def test_malformed_account_still_rejected_during_pairing(descriptor, summary, pr
     providers[0]["usageLimits"]["resetCredits"]["availableCount"] = -1
     with pytest.raises(T3ProtocolError):
         normalize(descriptor, summary, providers, now.date(), "UTC", now)
+
+
+def test_single_bad_bucket_skipped_with_partial_status(descriptor, summary, now):
+    bad = deepcopy(summary["buckets"][0])
+    bad["day"] = "not-a-day"
+    summary["buckets"].append(bad)
+    snapshot = normalize(descriptor, summary, [], now.date(), "UTC", now, allow_partial=True)
+    assert snapshot.readings["usage/all/today/tokens"].value == 370
+    assert snapshot.readings["usage_status"].value == "partial"
+    assert snapshot.diagnostics["skipped_buckets"] == 1
+
+
+def test_all_bad_buckets_rejected_strict(descriptor, summary, now):
+    summary["buckets"][0]["day"] = "not-a-day"
+    with pytest.raises(T3ProtocolError):
+        normalize(descriptor, summary, [], now.date(), "UTC", now)
+
+
+def test_empty_sources_partial_without_values(descriptor, summary, now):
+    summary["sources"] = []
+    readings = normalize(
+        descriptor, summary, [], now.date(), "UTC", now, allow_partial=True
+    ).readings
+    assert readings["usage_status"].value == "partial"
+    assert readings["usage/all/today/tokens"].value is None
+
+
+def test_empty_buckets_keep_zero_with_ok_sources(descriptor, summary, now):
+    summary["buckets"] = []
+    readings = normalize(descriptor, summary, [], now.date(), "UTC", now).readings
+    assert readings["usage_status"].value == "ok"
+    assert readings["usage/all/month/tokens"].value == 0
+
+
+@pytest.mark.parametrize("value", [1.5, -0.5])
+def test_fractional_tokens_rejected(descriptor, summary, now, value):
+    summary["buckets"][0]["totals"]["outputTokens"] = value
+    with pytest.raises(T3ProtocolError):
+        normalize(descriptor, summary, [], now.date(), "UTC", now)
+
+
+def test_integral_float_tokens_sum_as_int(descriptor, summary, now):
+    summary["buckets"][0]["totals"]["outputTokens"] = 100.0
+    value = (
+        normalize(descriptor, summary, [], now.date(), "UTC", now)
+        .readings["usage/all/today/tokens"]
+        .value
+    )
+    assert value == 420
+    assert isinstance(value, int)
+
+
+def test_quota_rounding_dust_clamped(descriptor, summary, providers, now):
+    providers[0]["usageLimits"]["windows"][0]["usedPercent"] = 100.0000001
+    readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
+    assert readings["limit/codex/primary/used"].value == 100
+    assert readings["limit/codex/primary/remaining"].value == 0
+    assert readings["limits_status"].value == "ok"
+
+
+def test_quota_overflow_rejected_strict(descriptor, summary, providers, now):
+    providers[0]["usageLimits"]["windows"][0]["usedPercent"] = 101
+    with pytest.raises(T3ProtocolError):
+        normalize(descriptor, summary, providers, now.date(), "UTC", now)
+
+
+def test_naive_timestamps_assumed_utc(descriptor, summary, providers, now):
+    providers[0]["usageLimits"]["checkedAt"] = "2026-10-19T12:00:00"
+    providers[0]["usageLimits"]["windows"][0]["resetsAt"] = "2099-01-01T00:00:00"
+    readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
+    assert readings["limit/codex/primary/remaining"].value == 75
+    assert readings["limits_status"].value == "ok"
+
+
+def test_quota_keys_escaped_without_collision(descriptor, summary, now):
+    providers = [
+        {
+            "instanceId": "a/b",
+            "driver": "d",
+            "displayName": "X",
+            "usageLimits": {
+                "checkedAt": "2026-10-19T12:00:00Z",
+                "windows": [
+                    {
+                        "id": "c",
+                        "kind": "s",
+                        "label": "W",
+                        "usedPercent": 10,
+                        "resetsAt": "2099-01-01T00:00:00Z",
+                    }
+                ],
+            },
+        },
+        {
+            "instanceId": "a",
+            "driver": "d",
+            "displayName": "Y",
+            "usageLimits": {
+                "checkedAt": "2026-10-19T12:00:00Z",
+                "windows": [
+                    {
+                        "id": "b/c",
+                        "kind": "s",
+                        "label": "W",
+                        "usedPercent": 90,
+                        "resetsAt": "2099-01-01T00:00:00Z",
+                    }
+                ],
+            },
+        },
+    ]
+    readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
+    assert readings["limit/a%2Fb/c/remaining"].value == 90
+    assert readings["limit/a/b%2Fc/remaining"].value == 10
+
+
+def test_non_dict_reset_credits_skipped_strict(descriptor, summary, providers, now):
+    providers[0]["usageLimits"]["resetCredits"] = 5
+    readings = normalize(descriptor, summary, providers, now.date(), "UTC", now).readings
+    assert readings["limits_status"].value == "ok"
+    assert "limit/codex/credits" not in readings
+
+
+def test_empty_providers_unsupported_without_failure(descriptor, summary, now):
+    readings = normalize(descriptor, summary, [], now.date(), "UTC", now).readings
+    assert readings["limits_status"].value == "unsupported"
+
+
+def test_empty_providers_failed_after_refresh_failure(descriptor, summary, now):
+    readings = normalize(
+        descriptor, summary, [], now.date(), "UTC", now, limits_failed=True, allow_partial=True
+    ).readings
+    assert readings["limits_status"].value == "failed"
+
+
+def test_far_future_reset_outlives_check_cap(descriptor, summary, providers):
+    from custom_components.t3_code.models import expire_snapshot
+
+    checked = datetime(2026, 10, 19, 12, tzinfo=UTC)
+    providers[0]["usageLimits"]["checkedAt"] = "2026-10-19T12:00:00Z"
+    providers[0]["usageLimits"]["windows"][0]["resetsAt"] = "2099-01-01T00:00:00Z"
+    snapshot = normalize(descriptor, summary, providers, date(2026, 10, 19), "UTC", checked)
+    assert snapshot.readings["limit/codex/primary/remaining"].value == 75
+    # Two hours after the check (the old cap) the window must still be valid.
+    aged = expire_snapshot(snapshot, datetime(2026, 10, 19, 14, 0, 1, tzinfo=UTC))
+    assert aged.readings["limit/codex/primary/remaining"].value == 75
+    assert aged.readings["limits_status"].value == "ok"
