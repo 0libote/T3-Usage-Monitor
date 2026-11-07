@@ -198,6 +198,7 @@ async def test_malformed_account_has_an_explanation(hass, t3_server):
 
 
 async def test_server_label_cannot_inject_links(hass, t3_server):
+    """Server labels cannot render as dashboard links."""
     t3_server["providers"][0]["displayName"] = "[Click](https://evil.example)"
     t3_server["providers"][0]["usageLimits"]["windows"] = []
     t3_server["providers"][0]["usageLimits"]["unavailable"] = {"reason": "probeFailed"}
@@ -214,6 +215,7 @@ async def test_server_label_cannot_inject_links(hass, t3_server):
 
 
 async def test_dashboard_waiting_when_no_data(hass, t3_server):
+    """Missing data renders a waiting view, not a crash."""
     from unittest.mock import patch
 
     entry = create_entry(hass, t3_server)

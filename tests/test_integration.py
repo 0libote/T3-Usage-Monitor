@@ -209,6 +209,7 @@ async def test_pairing_rejects_null_usage_response(hass, t3_server):
 
 
 async def test_reauth_rejects_url_change_with_echoed_identity(hass, t3_server, monkeypatch):
+    """Reauth to a new address is rejected even with a known identity."""
     from custom_components.t3_code import api as api_module
 
     entry = create_entry(hass, t3_server)

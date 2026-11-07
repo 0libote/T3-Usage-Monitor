@@ -127,10 +127,12 @@ async def test_unknown_protocol(t3_server):
     ],
 )
 def test_auth_failure_tag_family(causes, expected):
+    """Auth-shaped RPC errors map to reauth; others do not."""
     assert T3Rpc._is_auth_failure(causes) is expected
 
 
 def test_cleartext_remote_host_warns(caplog):
+    """Cleartext hosts outside loopback log a warning."""
     with caplog.at_level("WARNING", logger="custom_components.t3_code.api"):
         url, _ = parse_connection("http://192.168.1.20:3773", "tok")
     assert url == "http://192.168.1.20:3773"
@@ -138,6 +140,7 @@ def test_cleartext_remote_host_warns(caplog):
 
 
 def test_loopback_cleartext_quiet(caplog):
+    """Loopback cleartext stays quiet."""
     with caplog.at_level("WARNING", logger="custom_components.t3_code.api"):
         parse_connection("http://127.0.0.1:3773", "tok")
     assert "cleartext" not in caplog.text
