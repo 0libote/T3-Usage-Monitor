@@ -9,10 +9,23 @@ from .api import T3Client
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
 from .coordinator import T3Coordinator
 from .dashboard import async_register_dashboard
-from .presentation import async_prepare_registry
+from .presentation import hide_legacy_details
 
 type T3ConfigEntry = ConfigEntry[T3Coordinator]
 PLATFORMS = [Platform.SENSOR]
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: T3ConfigEntry) -> bool:
+    """Hide legacy detail entities once and drop the old data flag."""
+    # Migration runs before setup with no update listeners registered, so
+    # rewriting data here cannot retrigger a reload.
+    if entry.minor_version >= 2 and "presentation_version" not in entry.data:
+        return True
+    if entry.data.get("presentation_version", 0) < 1:
+        hide_legacy_details(hass, entry)
+    new_data = {k: v for k, v in entry.data.items() if k != "presentation_version"}
+    hass.config_entries.async_update_entry(entry, data=new_data, minor_version=2)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: T3ConfigEntry) -> bool:
@@ -23,9 +36,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: T3ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
-    # Registry migration rewrites entry.data, which would retrigger the
-    # reload listener below if it were already registered; keep this order.
-    async_prepare_registry(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_dashboard(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
