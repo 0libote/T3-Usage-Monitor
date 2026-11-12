@@ -19,6 +19,41 @@ LOGGER = logging.getLogger(__name__)
 UNAVAILABLE_ENTITY = "sensor.t3_usage_monitor_missing"
 
 
+def _lovelace_dashboards(hass: HomeAssistant) -> dict | None:
+    """Return the Lovelace dashboard registry, or None when missing/reshaped.
+
+    This is the single access point for the private Lovelace registry shape
+    (``hass.data[LOVELACE_DATA].dashboards``). A refactor across the
+    supported releases degrades to "no sidebar dashboard" instead of
+    breaking setup.
+    """
+    try:
+        data = hass.data.get(LOVELACE_DATA)
+    except (AttributeError, TypeError):
+        return None
+    dashboards = getattr(data, "dashboards", None)
+    if not isinstance(dashboards, dict):
+        return None
+    return dashboards
+
+
+def _frontend_panels(hass: HomeAssistant) -> dict:
+    """Return registered frontend panels, tolerating frontend refactors."""
+    key = getattr(frontend, "DATA_PANELS", "frontend_panels")
+    try:
+        panels = hass.data.get(key, {})
+    except (AttributeError, TypeError):
+        return {}
+    return panels if isinstance(panels, dict) else {}
+
+
+def _notify_dashboard_updated(dashboard: LovelaceConfig) -> None:
+    """Refresh the dashboard without relying on the private method name."""
+    notify = getattr(dashboard, "_config_updated", None)
+    if callable(notify):
+        notify()
+
+
 def _md(value: str) -> str:
     """Escape markdown link syntax in server-controlled labels.
 
@@ -293,33 +328,57 @@ def async_register_dashboard(hass: HomeAssistant, entry) -> None:
     """Register only our own route; never replace a user's dashboard."""
     if not entry.options.get(CONF_SHOW_DASHBOARD, True):
         return
-    data = hass.data.get(LOVELACE_DATA)
-    if data is None:
+    dashboards = _lovelace_dashboards(hass)
+    if dashboards is None:
         LOGGER.warning("T3 dashboard is unavailable because Lovelace is not loaded")
         return
     path = f"t3-code-{entry.entry_id}"
-    if path in data.dashboards or path in hass.data.get(frontend.DATA_PANELS, {}):
+    if path in dashboards or path in _frontend_panels(hass):
         LOGGER.warning("T3 dashboard URL is already in use: %s", path)
         return
-    dashboard = T3Dashboard(hass, path, entry)
-    frontend.async_register_built_in_panel(
-        hass,
-        "lovelace",
-        sidebar_title=f"{NAME} · {entry.title}",
-        sidebar_icon="mdi:chart-box-outline",
-        frontend_url_path=path,
-        config={"mode": "yaml"},
-    )
-    data.dashboards[path] = dashboard
+    try:
+        dashboard = T3Dashboard(hass, path, entry)
+    except (AttributeError, TypeError, ValueError):
+        LOGGER.warning("T3 dashboard is unavailable because Lovelace is not loaded")
+        return
+    try:
+        frontend.async_register_built_in_panel(
+            hass,
+            "lovelace",
+            sidebar_title=f"{NAME} · {entry.title}",
+            sidebar_icon="mdi:chart-box-outline",
+            frontend_url_path=path,
+            config={"mode": "yaml"},
+        )
+    except (AttributeError, TypeError, ValueError):
+        LOGGER.warning("T3 dashboard is unavailable because Lovelace is not loaded")
+        return
+    try:
+        dashboards[path] = dashboard
+    except (AttributeError, TypeError):
+        try:
+            frontend.async_remove_panel(hass, path)
+        except (AttributeError, TypeError, ValueError):
+            pass
+        LOGGER.warning("T3 dashboard is unavailable because Lovelace is not loaded")
+        return
 
     @callback
     def cleanup():
-        if data.dashboards.get(path) is dashboard:
-            data.dashboards.pop(path)
-            frontend.async_remove_panel(hass, path)
+        if dashboards.get(path) is dashboard:
+            dashboards.pop(path)
+            try:
+                frontend.async_remove_panel(hass, path)
+            except (AttributeError, TypeError, ValueError):
+                pass
 
     entry.async_on_unload(cleanup)
-    entry.async_on_unload(entry.runtime_data.async_add_listener(dashboard._config_updated))
+
+    @callback
+    def _refresh() -> None:
+        _notify_dashboard_updated(dashboard)
+
+    entry.async_on_unload(entry.runtime_data.async_add_listener(_refresh))
 
     @callback
     def registry_changed(event):
@@ -327,6 +386,6 @@ def async_register_dashboard(hass: HomeAssistant, entry) -> None:
         # as the registry knows their IDs, rather than waiting for the next poll.
         entity = er.async_get(hass).async_get(event.data["entity_id"])
         if entity and entity.config_entry_id == entry.entry_id:
-            dashboard._config_updated()
+            _notify_dashboard_updated(dashboard)
 
     entry.async_on_unload(hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, registry_changed))
