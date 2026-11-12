@@ -224,3 +224,58 @@ async def test_dashboard_waiting_when_no_data(hass, t3_server):
     with patch.object(entry.runtime_data, "data", None):
         config = build_dashboard(hass, entry)
     assert "Waiting for current usage readings." in list(markdown_cards(config))[0]["content"]
+
+
+async def test_dashboard_degrades_when_lovelace_reshaped(hass, t3_server):
+    """A Lovelace refactor degrades to no dashboard instead of breaking setup."""
+    import types
+    from unittest.mock import patch
+
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.t3_code import dashboard as dashboard_module
+
+    # Private structures missing/reshaped are tolerated by the access layer.
+    sentinel = object()
+    original_lovelace = hass.data.get(LOVELACE_DATA, sentinel)
+    panels_key = getattr(frontend, "DATA_PANELS", "frontend_panels")
+    original_panels = hass.data.get(panels_key, sentinel)
+    hass.data[LOVELACE_DATA] = types.SimpleNamespace()
+    assert dashboard_module._lovelace_dashboards(hass) is None
+    hass.data[LOVELACE_DATA] = types.SimpleNamespace(dashboards=[])
+    assert dashboard_module._lovelace_dashboards(hass) is None
+    hass.data[panels_key] = None
+    assert dashboard_module._frontend_panels(hass) == {}
+    dashboard_module._notify_dashboard_updated(types.SimpleNamespace())
+    if original_lovelace is sentinel:
+        hass.data.pop(LOVELACE_DATA, None)
+    else:
+        hass.data[LOVELACE_DATA] = original_lovelace
+    if original_panels is sentinel:
+        hass.data.pop(panels_key, None)
+    else:
+        hass.data[panels_key] = original_panels
+    # Setup still succeeds with Lovelace unavailable; only the panel is absent.
+    with patch.object(dashboard_module, "_lovelace_dashboards", return_value=None):
+        entry = create_entry(hass, t3_server)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.LOADED
+        assert f"t3-code-{entry.entry_id}" not in hass.data.get(frontend.DATA_PANELS, {})
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_dashboard_refresh_without_private_notify(hass, t3_server):
+    """Registry/coordinator updates don't crash when the private notify is gone."""
+    entry = create_entry(hass, t3_server)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    dashboard = hass.data[LOVELACE_DATA].dashboards[f"t3-code-{entry.entry_id}"]
+    dashboard._config_updated = None
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id("sensor", DOMAIN, "test-server/usage/all/today/cost")
+    registry.async_update_entity(entity_id, new_entity_id="sensor.t3_renamed_cost")
+    await hass.async_block_till_done()
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_unload(entry.entry_id)
