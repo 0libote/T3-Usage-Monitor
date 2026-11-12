@@ -172,6 +172,11 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
             update_interval=timedelta(seconds=interval),
         )
         self.client = client
+        # DataUpdateCoordinator owns .data, but this subclass also
+        # refreshes it from the quota-expiry timer; declare it here so
+        # attribute checks see it as part of this class. The union type
+        # keeps None handling explicit instead of silencing the checker.
+        self.data: Snapshot | None = None
         self._cancel_expiry: CALLBACK_TYPE | None = None
 
     @callback
