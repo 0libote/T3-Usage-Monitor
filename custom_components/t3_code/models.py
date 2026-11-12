@@ -90,7 +90,9 @@ def _timestamp(value: Any) -> datetime | None:
         return None
 
 
-def _validate_summary(summary: dict[str, Any]) -> tuple[list, list, int]:
+def _validate_summary(
+    summary: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Check the envelope; skip bad buckets instead of failing the summary."""
     if (
         not isinstance(summary, dict)
@@ -289,7 +291,7 @@ def _normalize_percent(used: Any) -> tuple[int | float, int | float]:
     return normalized, remaining
 
 
-def _has_future_reset(windows: list, now: datetime) -> bool:
+def _has_future_reset(windows: list[dict[str, Any]], now: datetime) -> bool:
     """Check whether any window reports a reset still in the future."""
     for window in windows:
         if not isinstance(window, dict):
