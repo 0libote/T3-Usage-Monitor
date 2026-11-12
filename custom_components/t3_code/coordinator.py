@@ -2,16 +2,18 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from contextvars import ContextVar
+from datetime import date, datetime, timedelta
 from typing import Any
 
+from aiohttp import ClientError
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import T3AuthError, T3Client, T3Error
+from .api import T3AuthError, T3Client, T3Error, T3Rpc
 from .const import DOMAIN
 from .models import Snapshot, expire_snapshot, normalize
 
@@ -19,40 +21,64 @@ LOGGER = logging.getLogger(__name__)
 
 PROVIDER_TIMEOUT = 180
 
+# The poll's shared socket. fetch_snapshot opens one session per poll and
+# publishes it here so the fetch helpers reuse that socket instead of opening
+# their own; outside a poll the helpers open a short-lived session each.
+# (A ContextVar, not a parameter, because test doubles pin the helpers'
+# long-standing call shapes.)
+_current_rpc: ContextVar[T3Rpc | None] = ContextVar("t3_current_rpc", default=None)
 
-async def _fetch_usage(client: T3Client, descriptor: dict, today, time_zone: str) -> dict:
+
+async def _fetch_usage(client: T3Client, descriptor: dict, today: date, time_zone: str) -> dict:
+    """Read usage buckets, reusing the poll's socket when one is already open."""
+    payload = {
+        "sinceDay": today.replace(day=1).isoformat(),
+        "untilDay": today.isoformat(),
+        "timeZone": time_zone,
+        "resolution": "day",
+        "awaitRefresh": True,
+    }
+    shared = _current_rpc.get()
     try:
-        async with asyncio.timeout(PROVIDER_TIMEOUT), client.rpc(descriptor) as rpc:
-            return await rpc.call(
-                "server.getUsageSummary",
-                {
-                    "sinceDay": today.replace(day=1).isoformat(),
-                    "untilDay": today.isoformat(),
-                    "timeZone": time_zone,
-                    "resolution": "day",
-                    "awaitRefresh": True,
-                },
-            )
+        async with asyncio.timeout(PROVIDER_TIMEOUT):
+            if shared is None:
+                async with client.rpc(descriptor) as fresh_rpc:
+                    return await fresh_rpc.call("server.getUsageSummary", payload)
+            return await shared.call("server.getUsageSummary", payload)
     except TimeoutError as err:
         raise T3Error("T3 timed out while answering the usage request") from err
 
 
-async def _fetch_providers(client: T3Client, descriptor: dict) -> tuple[list, bool]:
+async def _fetch_providers(client: T3Client, descriptor: dict) -> tuple[list[dict[str, Any]], bool]:
     """Bound the refresh and its fallback with one shared timeout."""
+
+    async def _refresh(target: T3Rpc) -> tuple[list[dict[str, Any]], bool]:
+        refreshed = await target.call("server.refreshProviders", {})
+        return refreshed["providers"], False
+
     try:
         async with asyncio.timeout(PROVIDER_TIMEOUT):
+            shared = _current_rpc.get()
+            if shared is not None:
+                try:
+                    return await _refresh(shared)
+                except T3AuthError:
+                    raise
+                except (T3Error, ClientError, KeyError, TypeError):
+                    # The poll's socket may have died with the usage call; retry
+                    # below on a fresh session before falling back to config.
+                    pass
             try:
-                async with client.rpc(descriptor) as rpc:
-                    refreshed = await rpc.call("server.refreshProviders", {})
-                    return refreshed["providers"], False
+                async with client.rpc(descriptor) as fresh_rpc:
+                    return await _refresh(fresh_rpc)
             except T3AuthError:
                 raise
-            except (T3Error, KeyError, TypeError):
+            except (T3Error, ClientError, KeyError, TypeError):
                 # A timeout/closed socket cannot be reused. Config is only a fallback
                 # for discovering unavailable sensors; cached quotas are never current.
                 try:
-                    async with client.rpc(descriptor) as rpc:
-                        config = await rpc.call("server.getConfig", {})
+                    async with client.rpc(descriptor) as fresh_rpc:
+                        config = await fresh_rpc.call("server.getConfig", {})
                         return config["providers"], True
                 except T3AuthError:
                     raise
@@ -63,28 +89,39 @@ async def _fetch_providers(client: T3Client, descriptor: dict) -> tuple[list, bo
 
 
 async def fetch_snapshot(
-    client: T3Client, time_zone: str, expected_id: str, *, allow_partial: bool = False
+    client: T3Client,
+    time_zone: str,
+    expected_id: str,
+    *,
+    allow_partial: bool = False,
+    now: datetime | None = None,
 ) -> Snapshot:
-    """Check identity before authentication, then use separate bounded sockets."""
+    """Check identity before authentication, then read usage and quotas over one socket."""
     descriptor = await client.descriptor()
     if descriptor["environmentId"] != expected_id:
         raise T3AuthError("This address now belongs to a different T3 server")
-    now = dt_util.utcnow()
-    today = now.astimezone(dt_util.get_time_zone(time_zone)).date()
-    results = await asyncio.gather(
-        _fetch_usage(client, descriptor, today, time_zone),
-        _fetch_providers(client, descriptor),
-        return_exceptions=True,
-    )
-    for result in results:
-        if isinstance(result, T3AuthError):
-            raise result
-        if isinstance(result, BaseException) and not isinstance(result, T3Error):
-            raise result
-    summary: Any = results[0]
+    start = now if now is not None else dt_util.utcnow()
+    today = start.astimezone(dt_util.get_time_zone(time_zone)).date()
+    async with client.rpc(descriptor) as rpc:
+        token = _current_rpc.set(rpc)
+        try:
+            try:
+                summary: Any = await _fetch_usage(client, descriptor, today, time_zone)
+            except T3AuthError:
+                raise
+            except T3Error:
+                if not allow_partial:
+                    raise
+                summary = None
+            providers_result = await _fetch_providers(client, descriptor)
+        finally:
+            _current_rpc.reset(token)
+    if not isinstance(providers_result, tuple):
+        raise T3Error("T3 returned an invalid provider response")
+    providers, limits_failed = providers_result
     # One instant for the day check and the snapshot, so usage windows and
     # quota ages cannot straddle midnight differently.
-    poll_now = dt_util.utcnow()
+    poll_now = now if now is not None else dt_util.utcnow()
     current_day = poll_now.astimezone(dt_util.get_time_zone(time_zone)).date()
     if current_day != today:
         # A slow quota refresh can carry yesterday's usage past midnight.
@@ -103,9 +140,6 @@ async def fetch_snapshot(
         if not allow_partial:
             raise summary
         summary = None
-    if not isinstance(results[1], tuple):
-        raise T3Error("T3 returned an invalid provider response")
-    providers, limits_failed = results[1]
     snapshot = normalize(
         descriptor,
         summary,
@@ -137,12 +171,7 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
             name=DOMAIN,
             update_interval=timedelta(seconds=interval),
         )
-        # DataUpdateCoordinator owns .data, but this subclass also refreshes
-        # it from the quota-expiry timer; declare it here (mirroring the
-        # base class) so analysis sees the attribute as part of this class.
-        self.data: Snapshot = None  # type: ignore[assignment]
         self.client = client
-        self.entry = entry
         self._cancel_expiry: CALLBACK_TYPE | None = None
 
     @callback
@@ -191,8 +220,10 @@ class T3Coordinator(DataUpdateCoordinator[Snapshot]):
 
     async def _async_update_data(self) -> Snapshot:
         try:
+            entry = self.config_entry
+            assert entry is not None
             snapshot = await fetch_snapshot(
-                self.client, self.hass.config.time_zone, self.entry.unique_id, allow_partial=True
+                self.client, self.hass.config.time_zone, entry.unique_id, allow_partial=True
             )
         except T3AuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err

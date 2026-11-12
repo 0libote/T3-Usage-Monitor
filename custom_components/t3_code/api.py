@@ -8,11 +8,18 @@ import asyncio
 import ipaddress
 import json
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
-from aiohttp import ClientError, ClientSession, WSMsgType, WSServerHandshakeError
+from aiohttp import (
+    ClientError,
+    ClientSession,
+    ClientWebSocketResponse,
+    WSMsgType,
+    WSServerHandshakeError,
+)
 
 from .const import SCOPES
 
@@ -70,10 +77,13 @@ def parse_connection(address: str, credential: str = "") -> tuple[str, str]:
     return url, token
 
 
-def _check_status(status: int) -> None:
+def _check_status(status: int | None) -> None:
     if status in (401, 403):
         raise T3AuthError("T3 authentication failed; check the token and its read permissions")
-    if status >= 400:
+    if not isinstance(status, int) or status >= 400:
+        # A refused handshake may carry no HTTP status (aiohttp types
+        # WSServerHandshakeError.status as int | None); treat a missing or
+        # unrecognized status as a generic failure so no TypeError escapes.
         raise T3Error("T3 rejected the HTTP request")
 
 
@@ -145,7 +155,7 @@ class T3Client:
             raise T3Error("Could not exchange the T3 pairing token") from err
 
     @asynccontextmanager
-    async def rpc(self, descriptor: dict[str, Any]):
+    async def rpc(self, descriptor: dict[str, Any]) -> AsyncIterator["T3Rpc"]:
         """Open a short-lived socket; close it on success, failure, or cancellation."""
         version = descriptor["orchestrationProtocolVersion"]
         # http(s) origins use ws(s) sockets; plain ws only arises from a user-supplied
@@ -171,7 +181,7 @@ class T3Client:
 class T3Rpc:
     """Sequential Effect RPC requests with NDJSON framing and ping support."""
 
-    def __init__(self, socket) -> None:
+    def __init__(self, socket: ClientWebSocketResponse) -> None:
         self.socket = socket
         self.next_id = 0
 
