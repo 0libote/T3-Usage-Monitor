@@ -61,5 +61,27 @@
         "bearer": "Bearer token"
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "cost": {
+        "name": "Estimated cost"
+      },
+      "tokens": {
+        "name": "Tokens"
+      },
+      "remaining": {
+        "name": "Remaining"
+      },
+      "reset": {
+        "name": "Reset"
+      },
+      "reset_credits": {
+        "name": "Reset credits"
+      },
+      "status": {
+        "name": "Status"
+      }
+    }
   }
 }
