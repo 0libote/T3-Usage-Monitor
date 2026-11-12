@@ -32,6 +32,8 @@ class T3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Validate identity, exchange credentials, and test metrics before saving."""
 
     VERSION = 1
+    # Minor 2 moves legacy detail-hiding from setup into async_migrate_entry.
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         # (url, credential type, server identity, bearer). The raw pairing
